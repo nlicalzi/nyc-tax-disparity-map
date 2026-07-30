@@ -1,5 +1,24 @@
 # NYC Property Tax Disparity Map — 1-Pager
 
+## Status (updated 2026-07-30)
+- **Repo**: `nlicalzi/nyc-tax-disparity-map` (private), pushed to `main`.
+- **Environment**: Python venv at `.venv/` (duckdb, pandas, pyarrow, requests,
+  python-dotenv installed). `duckdb`, `tippecanoe`, `ogr2ogr` installed via
+  Homebrew. Socrata app token in `.env` as `SOCRATA_APP_TOKEN` (gitignored;
+  `set -a; source .env; set +a` before running fetch scripts).
+- **Milestone 1 (data pipeline): DONE.** `pipeline/01`–`05` run end-to-end,
+  full citywide scale (1,164,670 unit rows, 857,253 building rows), see
+  `pipeline/README.md` for the run order. Validated: Griffin penthouse
+  computes to 0.35% effective rate against its real sale (script-asserted),
+  and the "expensive = lower rate" pattern holds citywide by sale-price
+  decile for class 1 and class 2, not just as an anecdote. Outputs live in
+  `data/cache/*.parquet` (gitignored — re-run pipeline to regenerate, ~15 min
+  full citywide fetch + a few min compute).
+- **Next up: Milestone 2** (tile build — see Milestones below). Not started.
+- Work style: check in with the user after each milestone before proceeding
+  to the next (their stated preference) — don't auto-continue through
+  milestones 3–7 without a pause.
+
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and
 condos are legally assessed as if they were rental buildings ("comparable
@@ -314,14 +333,22 @@ agent doesn't spend budget building things nobody asked for:
   performance strategy is the goal, not survey-grade parcel boundaries.
 
 ## Milestones
-1. Data pipeline: build and debug against a small sample (one borough or a
-   capped SoQL query) per the agent-workflow rules above, then run full-scale
-   as a background script → fetch + join + compute effective rates →
-   validated sample CSV (spot check against known examples like the CPS
-   penthouse).
-2. Tile build: GeoJSON → PMTiles with zoom-dependent generalization (lean
-   schema, low-zoom aggregation) per the performance strategy above; confirm
-   the hosting choice actually serves range requests.
+1. ✅ **DONE** — Data pipeline: build and debug against a small sample (one
+   borough or a capped SoQL query) per the agent-workflow rules above, then
+   run full-scale as a background script → fetch + join + compute effective
+   rates → validated sample CSV (spot check against known examples like the
+   CPS penthouse). See Status above and `pipeline/README.md`.
+2. **NEXT** — Tile build: GeoJSON → PMTiles with zoom-dependent
+   generalization (lean schema, low-zoom aggregation) per the performance
+   strategy above; confirm the hosting choice actually serves range
+   requests. Source data: `data/cache/building_effective_rates.parquet`
+   (map-rendering grain, one row per PLUTO `bbl`) — needs geometry joined in
+   (this parquet has no polygons yet; PLUTO's `geom`/lat-lon wasn't pulled
+   in the milestone-1 fetch, only tabular fields were — see
+   `pipeline/03_fetch_pluto.py`). Pull PLUTO geometry (GeoJSON export or via
+   `ogr2ogr` against the Socrata geospatial endpoint), join to
+   `building_effective_rates.parquet` by `bbl`, then tile with `tippecanoe`
+   per the zoom-dependent generalization plan below.
 3. Map MVP: static color-by-rate map, no interactivity.
 4. Interactivity: popups (from tile properties, no extra fetch), lazy-loaded
    search, filters.
