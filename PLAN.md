@@ -10,12 +10,30 @@ value. Result: effective tax rates *fall* as property value rises at the very
 top.
 
 Concrete anchors to cite in the UI:
-- Ken Griffin's $238M Central Park South penthouse: DOF market value ~$9.4M,
-  effective rate ~0.22%.
+- Ken Griffin's Central Park South penthouse (BBL 1-01030-1082, "220 CENTRAL
+  PARK SOUTH, 50"): sold 2019-01-23 for $239,958,219. Current (FY2026 final
+  roll) DOF taxable value is $6,725,023 (tax class 2); at the FY2026 class 2
+  rate (12.439%) that computes to ~$836,500 in tax — an effective rate of
+  **~0.35% of the actual sale price**. (Note: the commonly-cited "~0.22%"
+  figure was computed against an earlier, lower assessment year — DOF's own
+  reported value for this unit has drifted from ~$9.4M up to ~$15.5M over
+  FY2023–FY2027 even though nothing about the unit changed; the sale price is
+  fixed. Verified directly against NYC Open Data on 2026-07-30 — see
+  Data sources below.)
 - NYU Furman Center, *State of the City 2025*: for co-op/condo units sold in
   2025, DOF market value undershot actual sale price by a median of
   ~$850K (co-ops) / ~$806K (condos), while modest condos are comparatively
   overtaxed.
+- **Why this matters for the metric, not just the anecdote**: DOF's own
+  "market value" for co-ops/condos is *already* the deflated income-approach
+  number — dividing DOF's computed tax by DOF's own market value nets out to
+  a nearly uniform ~5.6% for every class-2 property regardless of luxury
+  level (45% assessment ratio × 12.4% rate), confirmed empirically on the
+  Griffin unit (assessed value tracks DOF market value almost exactly, no
+  meaningful cap suppression). The real disparity only shows up against the
+  *actual sale price*. See "Core metric" and "Data sources" below — this
+  changed the pipeline's data requirements from the original draft of this
+  plan.
 
 Site goal: let anyone search or click any NYC property and see, side by side,
 its market value, DOF assessed value, computed property tax, and effective
@@ -24,22 +42,76 @@ pattern visually obvious (e.g., color by effective rate, size/opacity by
 market value).
 
 ## Data sources (all public, NYC Open Data / Socrata)
-- **Property Valuation and Assessment Data** (dataset `yjxr-fw8i`, ~9.85M
-  rows/40 cols, annual DOF roll) — market value, transitional/actual assessed
-  value, exemption value, tax class, BBL. Primary source table.
-- **PLUTO** (Dept. of City Planning + DOF) — parcel geometry join key (BBL),
-  lot/building attributes, lat/lon centroids for geocoding.
+Verified directly against the live Socrata catalog/API on 2026-07-30 — the
+original draft of this plan cited a dataset that turned out to be stale; the
+IDs below are current.
+
+- **Property Valuation and Assessment Data — Tax Classes 1,2,3,4**
+  (dataset `8y4t-faws`, ~11.7M rows, actively updated — last updated
+  2026-06-15) — the correct, current primary source table. **Not** `yjxr-fw8i`
+  (a similarly-named dataset that stopped updating in 2020 and only covers
+  FY2011–2019 — don't use it). Schema is the raw RPAD roll layout: for each
+  BBL/unit-lot and roll `year`, there are parallel PY/TEN/CBN/FIN/CUR-prefixed
+  blocks (prior-year, tentative, changed-by-notice, final, current) each with
+  MKT (market value), ACT (actual assessed), TRN (transitional assessed), and
+  TXB (taxable — post-cap, post-exemption; this is the base the class rate
+  applies to) land/total fields, plus a per-stage tax class. **Use the
+  `cur*` fields** (`curmkttot`, `curtxbtot`, `curtaxclass`) — `curtxbtot` is
+  already exemption- and cap-adjusted, so no separate exemption subtraction
+  is needed. Filter to `year='2026' AND period='3'` for the v1 snapshot (see
+  Data vintage below). Key is `(boro, block, lot)` — for condos/co-ops, `lot`
+  is the *individual unit's* tax lot (typically a 4-digit number in the
+  1000s range), not the building's PLUTO lot.
+- **PLUTO** (`64uk-42ks`, Dept. of City Planning + DOF, ~858,602 rows, updated
+  2026-05-28) — parcel geometry join key (`bbl`), lot/building attributes,
+  `latitude`/`longitude` centroids, `geom` polygon. One row per physical tax
+  lot/building. For condos, PLUTO's `bbl` is the building-level "billing lot"
+  (e.g. block 1030 lot 7501 for 220 Central Park South) — all of that
+  building's individual unit-lots from `8y4t-faws` share this one PLUTO row
+  for geometry/map-rendering purposes. See Core metric below for how
+  building-level map values are derived from unit-level data.
+- **NYC Citywide Annualized Calendar Sales** (`w2pb-icbu`, ~845,607 rows,
+  2016-01-01 through 2025-12-31, updated 2026-06-09) — **new data source,
+  added after discovering DOF's own market value can't serve as the
+  denominator for co-op/condo effective rate (see Core metric).** Has `bbl`
+  (building-level, for geometry) plus `block`/`lot` (unit-level, for joining
+  to `8y4t-faws`) and `sale_price`/`sale_date`. This is what makes the
+  Furman-Center-style "true value vs. DOF value" comparison possible instead
+  of just citing it anecdotally. Filter out $0/nominal transfers (family
+  transfers, foreclosures) before treating a sale as "arms-length market
+  value." Coverage is inherently partial — most parcels don't sell every
+  year — so plan on a two-tier metric (see below), not full citywide
+  coverage of the "true" rate.
 - **DOF Digital Tax Map** / borough block-lot shapefiles — parcel polygons for
   true choropleth rendering (fallback: PLUTO centroids as points if polygon
   join is too heavy).
-- **Annual property tax class rates** (published yearly by DOF/NYC Council,
-  four numbers per fiscal year) — needed because *actual tax paid* is not
-  bulk-published; it's computed as `(assessed value − exemptions) × class
-  rate`. This is the same method ProPublica/NYT/Furman Center use. Flag
-  this clearly in the site's methodology footer so it reads as "computed
-  estimate," not scraped bill data.
+- **Annual property tax class rates** — **not a bulk Open Data dataset**;
+  published as a small HTML table at
+  `nyc.gov/site/finance/property/property-tax-rates.page`, four numbers per
+  fiscal year, adopted by City Council resolution. As of 2026-07-30 the page
+  shows adopted rates through **tax year 2026** (Class 1: 19.843%, Class 2:
+  12.439%, Class 3: 11.108%, Class 4: 10.848%) — FY2027 rates are not yet
+  posted even though FY2027 assessed values already exist, because NYC bills
+  at the prior year's rate until Council adopts the new one (typically
+  November, per DOF's own taxpayer-advocate reference card). This is exactly
+  why the v1 snapshot uses FY2026 throughout (see Data vintage) rather than
+  mixing FY2027 assessed values with a not-yet-final rate. Hardcode this
+  4-number table in the pipeline with the source URL and verification date
+  in a comment; it isn't worth scraping for a one-time snapshot (see
+  Non-goals).
 - Stretch: NYC DOF property tax bill lookup (per-BBL, not bulk) to spot-check
   a sample of computed values against real bills.
+
+## Data vintage (v1 snapshot)
+- **Assessment roll**: `8y4t-faws`, `year='2026'`, `period='3'` (FY2026 final
+  roll — the most recent fiscal year that is both fully assessed *and* has a
+  fully-adopted tax rate, avoiding the FY2027 provisional-rate issue above).
+- **Tax rates**: FY2026 adopted rates, as listed above, sourced from
+  `nyc.gov/site/finance/property/property-tax-rates.page`, verified
+  2026-07-30.
+- **Sales**: `w2pb-icbu`, full 2016–2025 window, for the sales-join layer.
+- Document this exact combination in the site's methodology footer per the
+  existing non-goals commitment to a single fixed vintage.
 
 ## Agent workflow: keep the build agent's own token cost down
 Separate from *site* performance above: the source data (9.85M valuation
@@ -68,9 +140,11 @@ back a summary** — never "read the data" into the conversation.
   `pipeline/`, runnable end-to-end with one command. The agent's job is to
   write/debug/run scripts, not manually reason over rows.
 - **Validate with in-script assertions, not by eyeballing rows.** Bake known
-  checks into the script (e.g., assert the Griffin penthouse BBL computes to
-  ~0.22% effective rate) so it prints PASS/FAIL — the agent reads one line,
-  not the underlying rows, to confirm correctness.
+  checks into the script (e.g., assert the Griffin penthouse unit-lot
+  (boro=1, block=1030, lot=1082) computes to a sale-verified effective rate
+  in the ~0.3%–0.4% range against its real $239,958,219 sale — see "The
+  story" for the exact expected numbers) so it prints PASS/FAIL — the agent
+  reads one line, not the underlying rows, to confirm correctness.
 - **Geometry ops via CLI tools, never in-context parsing.** Use `ogr2ogr`,
   `mapshaper`, and `tippecanoe` for simplification/tiling — file-to-file CLI
   operations. The agent should never need to parse a coordinate array itself.
@@ -99,9 +173,39 @@ back a summary** — never "read the data" into the conversation.
   rediscovery.
 
 ## Core metric
-`effective_rate = computed_annual_tax / market_value` per BBL/year. Bucket by
-tax class (1 = 1-3 family homes, 2 = co-ops/condos/rentals, 4 = commercial)
-since the disparity is mainly a class-1-vs-class-2 story.
+`computed_annual_tax = curtxbtot × class_rate` per unit-lot (already
+exemption/cap-adjusted, see Data sources). The denominator is **not**
+uniformly DOF's own `curmkttot` — that was the original draft's assumption,
+and it's wrong for co-ops/condos (see the callout in "The story" above).
+Two-tier metric instead:
+
+1. **Sale-verified effective rate** (`computed_annual_tax / sale_price`) —
+   used wherever a qualifying recent arms-length sale exists in the
+   2016–2025 sales join (`w2pb-icbu`). This is the "real" rate and the one
+   that shows the disparity. For class 1 (1-3 family homes), DOF's own
+   comps-based market value is already close to true value, so this and the
+   DOF-relative rate mostly agree; for class 2, they diverge sharply — that
+   divergence *is* the story.
+2. **Assessed-value effective rate** (`computed_annual_tax / curmkttot`) —
+   fallback for parcels/units with no qualifying recent sale. Must be
+   visually distinguished on the map from tier 1 (e.g. muted/hatched
+   styling), not blended into the same color scale, since it's a
+   structurally different (and for class 2, much higher-looking) number —
+   see the ~5.6%-uniform finding above. Label it clearly in the popup as
+   "based on DOF's own valuation, no recent sale on record" vs. "based on
+   actual sale price."
+
+Building-level map dots (PLUTO granularity) aggregate their constituent
+unit-lots: sum `computed_annual_tax` across all units sharing that PLUTO
+`bbl`; for the numerator side of tier 1, use sale-verified units only where
+available (e.g. median sale-verified effective rate among that building's
+recently-sold units), falling back to tier 2 for buildings with zero
+recently-sold units. Unit-level detail (individual apartment's own rate,
+sale date, sale price) stays available in the popup/detail view, not just
+the aggregate.
+
+Bucket by tax class (1 = 1-3 family homes, 2 = co-ops/condos/rentals,
+4 = commercial) since the disparity is mainly a class-1-vs-class-2 story.
 
 ## Tech stack (current state of the art for a static, no-backend site)
 - **Hosting**: GitHub Pages, fully static — no server, no database.
@@ -176,10 +280,14 @@ Other budget items:
 ## Site UX
 1. Landing view: full NYC map, parcels colored by effective tax rate
    (sequential/diverging scale), sized or filtered by market value tier.
-2. Click/hover a parcel → popup: address, tax class, market value, assessed
-   value, exemptions, computed tax, effective rate, plus a one-line
-   "for scale" comparison (e.g., "pays a lower rate than 90% of Brooklyn
-   co-ops").
+   Sale-verified (tier 1) and assessed-value-fallback (tier 2) parcels are
+   visually distinguished (see Core metric) with a legend explaining the
+   difference, not silently blended.
+2. Click/hover a parcel → popup: address, tax class, market/sale value,
+   assessed value, computed tax, effective rate, which tier it's based on
+   (recent sale vs. DOF's own valuation, with sale date if applicable), plus
+   a one-line "for scale" comparison (e.g., "pays a lower rate than 90% of
+   Brooklyn co-ops").
 3. Search by address/BBL (client-side fuzzy match against a lightweight
    index, e.g., MiniSearch, since there's no backend).
 4. Borough / tax-class filter toggles.
@@ -226,12 +334,27 @@ agent doesn't spend budget building things nobody asked for:
 ## Risks / open questions
 - **Tax paid is computed, not scraped** — must be labeled clearly to avoid
   looking like leaked bill data.
+- **Sale-verified coverage is inherently partial** — most parcels don't sell
+  in any given 10-year window, so the "real" tier-1 metric (see Core metric)
+  won't cover the whole city. The map must make the tier-1/tier-2 split
+  visually obvious rather than implying uniform confidence. Sparse tier-1
+  coverage in a given neighborhood/tier is a real result to show, not a bug
+  to hide.
+- **Unit-lot vs. billing-lot join is more involved than a flat BBL join** —
+  DOF taxes individual condo/co-op units on their own unit-lot (`boro`,
+  `block`, `lot` in `8y4t-faws`), which must be joined to sales at the same
+  granularity, then aggregated *up* to PLUTO's building-level `bbl` for map
+  rendering (see Core metric's aggregation rule). Verified this works with
+  real data (220 Central Park South), but the aggregation logic needs
+  broader validation once the pipeline runs at scale — treat milestone 1 as
+  iterative on this point, not one-and-done.
 - **Parcel count / tile size** — ~858K NYC tax lots; addressed by the
   performance strategy above (zoom-dependent aggregation + lean tile
   schema), but the aggregation logic and quantization choices need real
   data to tune, so treat milestone 2 as iterative, not one-and-done.
-- **Geometry join**: PLUTO BBL ↔ DOF valuation BBL join should be clean, but
-  verify vintage-year alignment (roll year vs. PLUTO version).
+- **Tax rate timing**: FY2027 assessed values already exist but FY2027's
+  rate isn't adopted yet (see Data vintage) — resolved by pinning v1 to
+  FY2026 throughout, not mixing vintages.
 - **Annual refresh**: resolved as a non-goal for v1 (see Non-goals section)
   — one-time snapshot, revisit only if the site gets traction.
 
