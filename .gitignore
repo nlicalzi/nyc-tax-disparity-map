@@ -1,0 +1,18 @@
+.env
+.env.*
+!.env.example
+
+# data
+data/cache/
+data/raw/
+*.csv
+*.parquet
+*.geojson
+!data/samples/*.csv
+
+# node
+node_modules/
+dist/
+
+# os
+.DS_Store
