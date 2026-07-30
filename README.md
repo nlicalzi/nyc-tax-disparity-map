@@ -9,7 +9,7 @@ See [PLAN.md](./PLAN.md) for the full design doc.
 
 ## Status
 
-Milestone 1 (data pipeline) is done and validated. See milestones in
+Milestones 1 (data pipeline) and 2 (tile build) are done. See milestones in
 PLAN.md.
 
 ## Data vintage

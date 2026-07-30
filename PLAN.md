@@ -14,7 +14,15 @@
   decile for class 1 and class 2, not just as an anecdote. Outputs live in
   `data/cache/*.parquet` (gitignored — re-run pipeline to regenerate, ~15 min
   full citywide fetch + a few min compute).
-- **Next up: Milestone 2** (tile build — see Milestones below). Not started.
+- **Milestone 2 (tile build): DONE.** `pipeline/06`–`08` fetch real parcel
+  geometry (PLUTO has none — see corrected Data sources), join it to
+  `building_effective_rates.parquet`, and build the PMTiles tileset. Output:
+  `site/public/tiles/buildings.pmtiles` (856,471 features, 103MB, z9–z16).
+  GitHub Pages verified to correctly serve HTTP range requests. See
+  Milestones below for full detail and what's explicitly deferred (H3
+  low-zoom binning).
+- **Next up: Milestone 3** (map MVP — static color-by-rate map, no
+  interactivity). Not started.
 - Work style: check in with the user after each milestone before proceeding
   to the next (their stated preference) — don't auto-continue through
   milestones 3–7 without a pause.
@@ -82,13 +90,37 @@ IDs below are current.
   is the *individual unit's* tax lot (typically a 4-digit number in the
   1000s range), not the building's PLUTO lot.
 - **PLUTO** (`64uk-42ks`, Dept. of City Planning + DOF, ~858,602 rows, updated
-  2026-05-28) — parcel geometry join key (`bbl`), lot/building attributes,
-  `latitude`/`longitude` centroids, `geom` polygon. One row per physical tax
-  lot/building. For condos, PLUTO's `bbl` is the building-level "billing lot"
-  (e.g. block 1030 lot 7501 for 220 Central Park South) — all of that
-  building's individual unit-lots from `8y4t-faws` share this one PLUTO row
-  for geometry/map-rendering purposes. See Core metric below for how
-  building-level map values are derived from unit-level data.
+  2026-05-28) — parcel join key (`bbl`), lot/building attributes,
+  `latitude`/`longitude` centroids. One row per physical tax lot/building.
+  For condos, PLUTO's `bbl` is the building-level "billing lot" (e.g. block
+  1030 lot 7501 for 220 Central Park South) — all of that building's
+  individual unit-lots from `8y4t-faws` share this one PLUTO row for
+  geometry/map-rendering purposes. See Core metric below for how
+  building-level map values are derived from unit-level data. **Correction
+  (2026-07-30, milestone 2): PLUTO does NOT have real polygon geometry.**
+  The dataset's schema lists a `geom` field, but it is 100% null across all
+  858,602 rows (verified directly against the live API) — PLUTO only ever
+  provides `latitude`/`longitude` centroids. `03_fetch_pluto.py` already
+  reflects this (it never selects `geom`). Real polygons come from the two
+  datasets below instead.
+- **TAX_LOT_POLYGON** (`i38t-6if2`, part of DOF's Digital Tax Map
+  Collection, ~858,042 rows) — the actual parcel polygon source. One
+  `MultiPolygon` per physical tax lot, keyed by `bbl`. Matches PLUTO's
+  `bbl` directly for ~98.6% of buildings. Condo billing lots (synthetic
+  BBLs like 220 CPS's 1010307501) are **not** physical parcels and never
+  appear here directly — see the crosswalk below.
+- **Digital Tax Map: Condominiums** (`p8u6-a6it`, ~12,165 rows) —
+  crosswalk from a condo's PLUTO billing `bbl` (`condo_billing_bbl`) to the
+  real physical tax lot(s) it's built on (`condo_base_bbl`). Required to
+  resolve condo buildings' geometry via `TAX_LOT_POLYGON` (~1.2% of
+  buildings, of which ~0.06% — 533 buildings — map to *multiple* base lots
+  and need those polygons dissolved into one footprint). Validated against
+  220 Central Park South: `condo_billing_bbl` 1010307501 resolves to base
+  `bbl` 1010300019, confirmed geometrically correct (closest match to
+  PLUTO's own centroid for that building; a second candidate lot on the
+  same block was a smaller, wrong sliver). Combined, `TAX_LOT_POLYGON` +
+  this crosswalk resolve **99.87%** of buildings to a real polygon; the
+  remaining ~0.13% fall back to PLUTO's point centroid.
 - **NYC Citywide Annualized Calendar Sales** (`w2pb-icbu`, ~845,607 rows,
   2016-01-01 through 2025-12-31, updated 2026-06-09) — **new data source,
   added after discovering DOF's own market value can't serve as the
@@ -272,14 +304,17 @@ Bucket by tax class (1 = 1-3 family homes, 2 = co-ops/condos/rentals,
    only loads as they zoom in on a neighborhood — which is also the more
    useful reading experience.
 3. **Verify the host supports HTTP range requests before committing to
-   this architecture.** PMTiles' entire performance story depends on the
-   static host serving byte-range requests so the client only pulls the
-   directory + relevant tile bytes, not the whole file. Confirm early
-   whether GitHub Pages / raw.githubusercontent.com / GitHub Release assets
-   honor `Range` headers reliably at the file sizes we'll produce; if not,
-   front the `.pmtiles` file with a CDN that does (e.g. jsDelivr in front of
-   a GitHub Release, or Cloudflare R2) rather than discovering this after
-   the map ships slow.
+   this architecture. VERIFIED 2026-07-30.** Both GitHub Pages proper
+   (bare `*.github.io`, Fastly-backed origin) and `raw.githubusercontent.com`
+   correctly return `HTTP/2 206` with an accurate `Content-Range` header on
+   a real `Range` GET request against live files (confirmed directly, not
+   just via docs — PMTiles' own hosting docs mention GitHub Pages only as
+   an untested "if it fits, it's easy" option, so this needed independent
+   verification). No CDN fronting needed for v1; GitHub Pages alone is
+   sufficient. Only caveat: GitHub Pages' 1GB-per-repo soft limit and
+   individual file limits (~100MB before Git warns/blocks a plain push) —
+   the citywide tileset built at 103MB (see Milestone 2), just over the
+   50MB LFS-recommended threshold; watch this if the tileset grows.
 
 Other budget items:
 - **JS payload**: keep initial bundle lean (plain Vite/TS, no React unless
@@ -338,17 +373,30 @@ agent doesn't spend budget building things nobody asked for:
    run full-scale as a background script → fetch + join + compute effective
    rates → validated sample CSV (spot check against known examples like the
    CPS penthouse). See Status above and `pipeline/README.md`.
-2. **NEXT** — Tile build: GeoJSON → PMTiles with zoom-dependent
+2. ✅ **DONE** — Tile build: GeoJSON → PMTiles with zoom-dependent
    generalization (lean schema, low-zoom aggregation) per the performance
-   strategy above; confirm the hosting choice actually serves range
-   requests. Source data: `data/cache/building_effective_rates.parquet`
-   (map-rendering grain, one row per PLUTO `bbl`) — needs geometry joined in
-   (this parquet has no polygons yet; PLUTO's `geom`/lat-lon wasn't pulled
-   in the milestone-1 fetch, only tabular fields were — see
-   `pipeline/03_fetch_pluto.py`). Pull PLUTO geometry (GeoJSON export or via
-   `ogr2ogr` against the Socrata geospatial endpoint), join to
-   `building_effective_rates.parquet` by `bbl`, then tile with `tippecanoe`
-   per the zoom-dependent generalization plan below.
+   strategy above; hosting choice (GitHub Pages) confirmed to serve range
+   requests correctly (see Performance strategy item 3). Source data:
+   `data/cache/building_effective_rates.parquet` — needed geometry joined
+   in. **PLUTO itself has no polygon geometry** (see corrected PLUTO entry
+   in Data sources above); geometry comes from `TAX_LOT_POLYGON` + the
+   condo billing-lot crosswalk instead (`pipeline/06_fetch_geometry.py`,
+   `pipeline/07_join_geometry.py`), resolving 99.91% of buildings to
+   geometry (99.87% real polygon, 0.04% point fallback; 0.09% have none).
+   Tiled with `tippecanoe` (`pipeline/08_build_tileset.py`): lean/quantized
+   schema (bbl, boro, unit count, market value in $10K units, tax in $100
+   units, tier-1/tier-2 effective rate in basis points), z9–z16,
+   `--coalesce-densest-as-needed`/`--drop-densest-as-needed`/
+   `--extend-zooms-if-still-dropping` for automatic low-zoom thinning with
+   full per-parcel detail preserved at z14+. Citywide output: 856,471
+   features → `site/public/tiles/buildings.pmtiles` (103MB). One-borough
+   (Manhattan) dev-sample tileset also built at `data/cache/dev_sample.pmtiles`
+   (gitignored) for the agent's own fast iteration loop, per the
+   agent-workflow rules. **Not built for v1** (noted as optional/stretch in
+   Tech stack): H3-hex-bin pre-aggregation at low zoom — tippecanoe's
+   built-in feature-dropping/coalescing does the zoom-dependent
+   generalization job instead; revisit only if low-zoom density still looks
+   bad once rendered (Milestone 3).
 3. Map MVP: static color-by-rate map, no interactivity.
 4. Interactivity: popups (from tile properties, no extra fetch), lazy-loaded
    search, filters.
