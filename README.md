@@ -9,15 +9,23 @@ See [PLAN.md](./PLAN.md) for the full design doc.
 
 ## Status
 
-Work in progress. See milestones in PLAN.md.
+Milestone 1 (data pipeline) is done and validated. See milestones in
+PLAN.md.
 
 ## Data vintage
 
-TBD — documented here once the pipeline runs (see methodology footer on the
-site itself for the canonical statement).
+- DOF assessment roll: FY2026 final roll (`year='2026'`, `period='3'`,
+  dataset `8y4t-faws`).
+- Tax class rates: FY2026 adopted rates (Class 1: 19.843%, Class 2: 12.439%,
+  Class 3: 11.108%, Class 4: 10.848%), from
+  nyc.gov/site/finance/property/property-tax-rates.page, verified 2026-07-30.
+- Sales: NYC Citywide Annualized Calendar Sales, 2016-01-01 through
+  2025-12-31 (dataset `w2pb-icbu`).
+- Effective rate is two-tier: sale-verified (tax ÷ actual recent sale price)
+  where a qualifying sale exists, DOF-value fallback (tax ÷ DOF's own market
+  value) otherwise. See PLAN.md's "Core metric" section for why this split
+  is necessary.
 
 ## Re-fetching data
 
-```
-pipeline/  # TBD: one-command pipeline scripts
-```
+See `pipeline/README.md`.

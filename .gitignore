@@ -10,9 +10,17 @@ data/raw/
 *.geojson
 !data/samples/*.csv
 
+# python
+__pycache__/
+*.pyc
+.venv/
+
 # node
 node_modules/
 dist/
 
 # os
 .DS_Store
+
+# claude code local state
+.claude/
