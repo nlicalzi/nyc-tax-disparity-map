@@ -140,7 +140,8 @@ def main():
                 building_tax, building_dof_market_value,
                 tier1_tax, tier1_sale_basis, tier1_unit_count,
                 building_effective_rate_tier1, building_effective_rate_tier2,
-                pluto_borough_2letter, geom_source, ST_AsWKB(geom) AS geom_wkb
+                pluto_borough_2letter, geom_source, ST_AsWKB(geom) AS geom_wkb,
+                address, tax_class, tier1_last_sale_date, tier1_pctile_pays_less_than
             FROM buildings_geo
         ) TO '{out_path}' (FORMAT PARQUET)
     """)

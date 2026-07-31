@@ -9,8 +9,17 @@ See [PLAN.md](./PLAN.md) for the full design doc.
 
 ## Status
 
-Milestones 1 (data pipeline) and 2 (tile build) are done. See milestones in
-PLAN.md.
+Milestones 1 (data pipeline), 2 (tile build), 3 (static map MVP), and 4
+(popups/search/filters) are done. See milestones in PLAN.md.
+
+## Running the site
+
+```
+cd site
+npm install
+npm run dev      # http://localhost:5173, uses the Manhattan dev-sample tileset
+npm run build && npm run preview   # full citywide tileset, as deployed
+```
 
 ## Data vintage
 

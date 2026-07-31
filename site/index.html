@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NYC Property Tax Disparity Map</title>
+    <!-- Milestone 6: the basemap style/sprite/fonts/tiles all come from this
+         host and are on the critical path to first paint -- preconnecting
+         removes one full DNS+TCP+TLS round trip from that path before the
+         map's own JS even requests the style. -->
+    <link rel="preconnect" href="https://tiles.openfreemap.org" crossorigin />
+    <link rel="dns-prefetch" href="https://tiles.openfreemap.org" />
+  </head>
+  <body class="story-active">
+    <div id="app">
+      <div id="map"></div>
+      <div id="chart-pin" aria-hidden="true"></div>
+
+      <header id="header" class="chrome">
+        <h1>NYC Property Tax Disparity Map</h1>
+        <p class="subtitle">Effective property tax rate by building, FY2026</p>
+        <div id="search"></div>
+        <div id="filters"></div>
+      </header>
+      <aside id="legend" class="chrome" aria-label="Legend"></aside>
+
+      <div id="story">
+        <a id="story-skip" class="story-skip" href="#story-step-3">Skip intro ↓</a>
+
+        <section class="story-step" data-step="0">
+          <div class="story-card">
+            <h2>NYC taxes million-dollar penthouses at a lower rate than modest family homes.</h2>
+            <p>
+              Because co-ops and condos are legally assessed as if they were rental buildings &mdash; not on what
+              they actually sold for &mdash; ultra-luxury condos often pay a smaller share of their real value in
+              tax than a two-family home in the outer boroughs. Scroll to see it, building by building.
+            </p>
+          </div>
+        </section>
+
+        <section class="story-step" data-step="1">
+          <div class="story-card">
+            <h2>Take Ken Griffin&rsquo;s penthouse.</h2>
+            <p>
+              220 Central Park South, unit 50. Sold January 23, 2019 for <strong>$239,958,219</strong> &mdash; at the
+              time, the most expensive home ever sold in the U.S.
+            </p>
+            <p>
+              The city&rsquo;s own FY2026 assessment values it at just <strong>$6,725,023</strong>. At the class-2
+              rate (12.439%), that computes to about <strong>$836,500</strong> in tax &mdash; an effective rate of
+              roughly <strong>0.35% of what it actually sold for</strong>.
+            </p>
+          </div>
+        </section>
+
+        <section class="story-step" data-step="2">
+          <div class="story-card">
+            <h2>It&rsquo;s not just one building.</h2>
+            <p>
+              Across thousands of sale-verified properties citywide, the same pattern holds: as sale price rises,
+              co-op/condo buildings (<span class="story-swatch story-swatch-cls2"></span>green) pay a
+              <em>falling</em> effective rate, while 1&ndash;3 family homes
+              (<span class="story-swatch story-swatch-cls1"></span>blue) stay roughly proportionate to what
+              they&rsquo;re worth.
+            </p>
+          </div>
+        </section>
+
+        <section class="story-step" id="story-step-3" data-step="3">
+          <div class="story-card">
+            <h2>Explore it yourself.</h2>
+            <p>
+              Search any address, or click a building on the map to see its own sale price, assessed value,
+              computed tax, and effective rate.
+            </p>
+            <button type="button" id="story-enter" class="story-enter">Start exploring the map &rarr;</button>
+          </div>
+        </section>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

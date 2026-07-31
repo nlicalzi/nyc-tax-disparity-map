@@ -1,0 +1,23 @@
+{
+  "name": "nyc-tax-disparity-map",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "postinstall": "node scripts/copy-maplibre-worker.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0"
+  },
+  "dependencies": {
+    "@observablehq/plot": "^0.6.17",
+    "maplibre-gl": "^6.1.0",
+    "minisearch": "^7.2.0",
+    "pmtiles": "^4.4.1"
+  }
+}

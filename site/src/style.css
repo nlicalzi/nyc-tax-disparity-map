@@ -1,0 +1,480 @@
+:root {
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --muted: #898781;
+  --border: rgba(11, 11, 11, 0.1);
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  color: var(--text-primary);
+  background: var(--surface-1);
+}
+
+#app {
+  position: relative;
+}
+
+/* #map is fixed (not absolute-within-#app) so it persists as a single
+   instance across both the scrollytelling intro and the free-roam
+   experience that follows it -- the intro's "pinned live map" steps
+   (story.ts) fly the same map's camera, they don't stand up a second one. */
+#map {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+/* Full-viewport mount point for the Observable Plot "smoking gun" scatter
+   (scatter.ts), shown only during the story's chart step -- sits above the
+   map, below the story text cards. Lazy-mounted on first use per
+   PLAN.md's Performance strategy (see story.ts). */
+#chart-pin {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px min(10vw, 120px) 60px 60px;
+  background: var(--surface-1);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+
+#chart-pin.chart-pin-visible {
+  opacity: 1;
+}
+
+#chart-pin > figure,
+#chart-pin > svg {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* Header/legend/filters ("chrome") are the free-roam UI -- hidden while the
+   intro story is active (body.story-active) and faded in once story.ts's
+   handoff fires (the "Start exploring the map" button), per the milestone-5
+   "full-screen intro overlay first" design. */
+.chrome {
+  z-index: 3;
+  transition:
+    opacity 0.4s ease,
+    transform 0.4s ease;
+}
+
+body.story-active .chrome {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+}
+
+#header {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  width: 300px;
+  box-shadow: 0 1px 4px rgba(11, 11, 11, 0.12);
+}
+
+#header h1 {
+  font-size: 15px;
+  margin: 0;
+  line-height: 1.3;
+}
+
+#header .subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 2px 0 0;
+}
+
+#legend {
+  position: absolute;
+  bottom: 24px;
+  left: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  width: 260px;
+  box-shadow: 0 1px 4px rgba(11, 11, 11, 0.12);
+  font-size: 12px;
+}
+
+.legend-section + .legend-section {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+#legend h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.legend-ramp {
+  height: 10px;
+  border-radius: 3px;
+}
+
+.legend-ramp-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+  color: var(--text-secondary);
+}
+
+.legend-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  flex: none;
+}
+
+.legend-swatch-solid {
+  background: #2a78d6;
+}
+
+.legend-note {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 10px 0 0;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+}
+
+/* Zoom +/- control isn't gated by the disabled scroll/drag handlers (see
+   story.ts) -- it calls map.zoomIn()/zoomOut() directly -- so it's hidden
+   alongside the rest of the free-roam chrome while the story is active. */
+.maplibregl-ctrl-top-right {
+  transition: opacity 0.4s ease;
+}
+
+body.story-active .maplibregl-ctrl-top-right {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --- Story (scrollytelling intro, milestone 5) --- */
+
+#story {
+  position: relative;
+  z-index: 2;
+}
+
+/* Once story.ts's handoff fires (the "Start exploring" button), the intro's
+   scroll track is no longer needed -- collapsing it here (rather than
+   leaving a tall, now-inert scroll region behind #map) hands the whole
+   viewport to the free-roam map, matching the current design's fixed-map
+   scroll/zoom behavior. */
+body.story-done #story {
+  display: none;
+}
+
+body.story-done {
+  overflow: hidden;
+}
+
+.story-step {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  padding: 0 6vw;
+}
+
+.story-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(11, 11, 11, 0.18);
+  padding: 22px 26px;
+  max-width: 420px;
+}
+
+.story-card h2 {
+  font-size: 20px;
+  line-height: 1.3;
+  margin: 0 0 10px;
+}
+
+.story-card p {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+}
+
+.story-card p:last-child {
+  margin-bottom: 0;
+}
+
+.story-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin: 0 3px -1px 0;
+}
+
+.story-swatch-cls1 {
+  background: #2a78d6;
+}
+
+.story-swatch-cls2 {
+  background: #008300;
+}
+
+.story-enter {
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  color: #fff;
+  background: #2a78d6;
+  border: none;
+  border-radius: 6px;
+  padding: 9px 16px;
+  cursor: pointer;
+}
+
+.story-enter:hover {
+  background: #1c5cab;
+}
+
+.story-skip {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 4;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px;
+  text-decoration: none;
+  box-shadow: 0 1px 4px rgba(11, 11, 11, 0.12);
+  transition: opacity 0.3s ease;
+}
+
+body.story-done .story-skip {
+  display: none;
+}
+
+/* --- Search --- */
+
+#search {
+  position: relative;
+  margin-top: 10px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-primary);
+  background: var(--surface-1);
+}
+
+.search-input:focus {
+  outline: 2px solid #5598e7;
+  outline-offset: -1px;
+}
+
+.search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(11, 11, 11, 0.15);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 2;
+}
+
+.search-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-result:last-child {
+  border-bottom: none;
+}
+
+.search-result:hover,
+.search-result:focus {
+  background: rgba(85, 152, 231, 0.1);
+}
+
+.search-result-addr {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.search-result-boro {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.search-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* --- Filters --- */
+
+#filters {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.filter-group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.filter-chip {
+  padding: 3px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.filter-chip-active {
+  background: #2a78d6;
+  border-color: #2a78d6;
+  color: #fff;
+}
+
+/* --- Popup --- */
+
+.maplibregl-popup-content {
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-family: inherit;
+}
+
+.popup h3 {
+  font-size: 14px;
+  margin: 0 0 2px;
+  padding-right: 12px;
+}
+
+.popup-sub {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.popup-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  padding: 3px 0;
+  border-top: 1px solid var(--border);
+}
+
+.popup-label {
+  color: var(--text-secondary);
+}
+
+.popup-value {
+  font-weight: 600;
+  text-align: right;
+}
+
+.popup-value-sub {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.popup-note,
+.popup-scale {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin: 8px 0 0;
+}
+
+.popup-footer {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 10px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}

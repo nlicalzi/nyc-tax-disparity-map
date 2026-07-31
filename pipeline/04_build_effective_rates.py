@@ -34,6 +34,30 @@ BORO_CODE_TO_PLUTO = {"1": "MN", "2": "BX", "3": "BK", "4": "QN", "5": "SI"}
 
 MIN_ARMS_LENGTH_SALE = 10000  # filter $0/nominal family transfers, foreclosures, etc.
 
+# A flat dollar floor alone isn't enough: it still let a $130,000 "sale"
+# through against a building DOF values at $1.054B (BBL 1011300001, an
+# obvious non-arms-length transfer -- easement, internal restructuring,
+# whatever it actually was), producing a nonsense 39,586% effective rate.
+# Found via milestone-3 map styling work, not milestone-1 validation --
+# the ~1% of tier1 buildings this affected were concentrated almost
+# exactly in the high-value Manhattan buildings the site's headline story
+# is about, so it wasn't a negligible tail.
+#
+# Fix: also require the sale price be at least MIN_SALE_TO_VALUE_RATIO of
+# the unit's own DOF market value (curmkttot). This is deliberately
+# one-sided -- it only rejects sale_price << curmkttot, never sale_price >>
+# curmkttot -- because sale price legitimately and substantially exceeding
+# DOF's (already-deflated, income-approach) market value is exactly the
+# disparity this site exists to show, not noise to filter out. The bad
+# example above had a ratio of 0.0123%; 1% leaves ~80x margin below any
+# plausible genuine distressed-sale ratio while still catching nominal
+# transfers. Skip the check when curmkttot is missing/zero -- can't sanity
+# check against a value we don't have.
+MIN_SALE_TO_VALUE_RATIO = 0.01
+
+# Final backstop, applied after the ratio filter -- see unit_computed below.
+EFFECTIVE_RATE_CEILING = 0.25
+
 SQL = f"""
 WITH class_rate AS (
     SELECT * FROM (VALUES
@@ -62,18 +86,47 @@ valuation AS (
     -- individual unit-lot rows. Confirmed via block 1030 lot 7501 (220 CPS).
     WHERE bldg_class != 'R0'
 ),
+-- `valuation` is NOT unique per (boro, block, lot) -- 4,133 keys citywide
+-- have multiple rows (e.g. a real O6 office record alongside a zero-value
+-- U9 placeholder sharing the same lot number; a handful of keys have
+-- dozens+ rows for reasons not yet fully understood -- flagged separately,
+-- out of scope for this fix). Joining the ratio check straight against
+-- `valuation` let a sale get sanity-checked against whichever sibling row
+-- the join fanned out to -- including a $0 placeholder, whose
+-- "curmkttot <= 0 -> can't check, let it through" branch then waived the
+-- check entirely for the REAL record's sake. Pre-aggregate to one
+-- representative value per key (the max -- a $0 sibling should never
+-- suppress a real one) so the ratio check can't be routed around this way.
+valuation_keymax AS (
+    SELECT boro, block, lot, MAX(curmkttot) AS curmkttot
+    FROM valuation
+    GROUP BY boro, block, lot
+),
+-- Join to valuation before picking the "latest" sale per unit-lot, so a
+-- nominal transfer gets discarded in favor of an earlier genuine sale
+-- (if any) rather than winning the dedup and silently killing tier-1
+-- status for that unit.
+sales_sane AS (
+    SELECT s.borough AS boro, s.block, s.lot,
+           TRY_CAST(s.sale_price AS DOUBLE) AS sale_price,
+           s.sale_date
+    FROM read_parquet('{CACHE}/sales_2016_2025.parquet') s
+    JOIN valuation_keymax v ON v.boro = s.borough AND v.block = s.block AND v.lot = s.lot
+    WHERE TRY_CAST(s.sale_price AS DOUBLE) > {MIN_ARMS_LENGTH_SALE}
+      AND (
+          v.curmkttot IS NULL OR v.curmkttot <= 0
+          OR TRY_CAST(s.sale_price AS DOUBLE) >= {MIN_SALE_TO_VALUE_RATIO} * v.curmkttot
+      )
+),
 latest_sale AS (
-    SELECT borough AS boro, block, lot, sale_price, sale_date,
+    SELECT boro, block, lot, sale_price, sale_date,
            ROW_NUMBER() OVER (
-               PARTITION BY borough, block, lot ORDER BY sale_date DESC
+               PARTITION BY boro, block, lot ORDER BY sale_date DESC
            ) AS rn
-    FROM read_parquet('{CACHE}/sales_2016_2025.parquet')
-    WHERE TRY_CAST(sale_price AS DOUBLE) > {MIN_ARMS_LENGTH_SALE}
+    FROM sales_sane
 ),
 sale_dedup AS (
-    SELECT boro, block, lot,
-           TRY_CAST(sale_price AS DOUBLE) AS sale_price,
-           sale_date
+    SELECT boro, block, lot, sale_price, sale_date
     FROM latest_sale WHERE rn = 1
 ),
 unit_computed AS (
@@ -82,9 +135,26 @@ unit_computed AS (
         cr.rate AS class_rate,
         v.curtxbtot * cr.rate AS computed_tax,
         s.sale_price, s.sale_date,
-        CASE WHEN s.sale_price IS NOT NULL THEN 1 ELSE 2 END AS tier,
+        -- Backstop on top of the ratio filter above: even a sale that clears
+        -- MIN_SALE_TO_VALUE_RATIO can still imply an impossible rate (e.g. a
+        -- $960K "sale" against a $95.8M valuation clears 1% easily but still
+        -- computes to 558% -- commercial/class-4 curtxbtot isn't cap-protected
+        -- the way residential is, so the tax base alone can dwarf a barely-
+        -- passing sale price). The >5% tail here has no clean natural break
+        -- between "real distressed sale" and "nominal transfer" -- it's a
+        -- smooth long tail, median 18% -- so EFFECTIVE_RATE_CEILING is a
+        -- deliberately generous, documented cutoff (5x+ any real class
+        -- average) rather than a precisely-derived one. Falls back to tier 2
+        -- exactly like "no sale at all" when a sale trips it.
         CASE
-            WHEN s.sale_price IS NOT NULL THEN v.curtxbtot * cr.rate / s.sale_price
+            WHEN s.sale_price IS NOT NULL
+                 AND v.curtxbtot * cr.rate / s.sale_price <= {EFFECTIVE_RATE_CEILING}
+            THEN 1 ELSE 2
+        END AS tier,
+        CASE
+            WHEN s.sale_price IS NOT NULL
+                 AND v.curtxbtot * cr.rate / s.sale_price <= {EFFECTIVE_RATE_CEILING}
+            THEN v.curtxbtot * cr.rate / s.sale_price
             WHEN v.curmkttot > 0 THEN v.curtxbtot * cr.rate / v.curmkttot
             ELSE NULL
         END AS effective_rate
@@ -106,7 +176,13 @@ boro_map AS (
 ),
 pluto AS (
     SELECT
-        bbl, borough AS pluto_borough, block AS pluto_block, lot AS pluto_lot,
+        -- PLUTO's bbl comes back from Socrata as a decimal-formatted string
+        -- (e.g. "1010307501.00000000") -- Socrata serializes its `number`
+        -- column type this way. Normalize once, here, so every downstream
+        -- consumer (join_geometry, the tile schema, search index) gets a
+        -- clean id without repeating the fix.
+        SPLIT_PART(bbl, '.', 1) AS bbl,
+        borough AS pluto_borough, block AS pluto_block, lot AS pluto_lot,
         TRY_CAST(condono AS BIGINT) AS condono,
         address, zipcode,
         TRY_CAST(latitude AS DOUBLE) AS latitude,
@@ -121,7 +197,7 @@ units_mapped AS (
     -- condono is only unique *within a block* in PLUTO (confirmed: e.g. QN condono=100
     -- collides across 10+ unrelated buildings on different blocks) -- block match is
     -- required, not optional, or this fans out into duplicate matches.
-    SELECT u.*, p.bbl AS pluto_bbl, p.pluto_borough AS pluto_borough
+    SELECT u.*, p.bbl AS pluto_bbl, p.pluto_borough AS pluto_borough, p.address AS pluto_address
     FROM units u
     JOIN boro_map bm ON bm.boro = u.boro
     JOIN pluto p
@@ -133,7 +209,7 @@ units_mapped AS (
     UNION ALL
 
     -- everything else: unit-lot IS the PLUTO lot
-    SELECT u.*, p.bbl AS pluto_bbl, p.pluto_borough AS pluto_borough
+    SELECT u.*, p.bbl AS pluto_bbl, p.pluto_borough AS pluto_borough, p.address AS pluto_address
     FROM units u
     JOIN boro_map bm ON bm.boro = u.boro
     JOIN pluto p
@@ -141,30 +217,59 @@ units_mapped AS (
      AND p.pluto_block = u.block
      AND p.pluto_lot = u.lot
     WHERE u.condo_number IS NULL
+),
+building_base AS (
+    SELECT
+        pluto_bbl,
+        ANY_VALUE(boro) AS boro,
+        ANY_VALUE(block) AS block,
+        COUNT(*) AS unit_count,
+        SUM(computed_tax) AS building_tax,
+        SUM(curmkttot) AS building_dof_market_value,
+        SUM(CASE WHEN tier = 1 THEN computed_tax ELSE 0 END) AS tier1_tax,
+        SUM(CASE WHEN tier = 1 THEN sale_price ELSE 0 END) AS tier1_sale_basis,
+        COUNT(*) FILTER (WHERE tier = 1) AS tier1_unit_count,
+        CASE
+            WHEN SUM(CASE WHEN tier = 1 THEN sale_price ELSE 0 END) > 0
+            THEN SUM(CASE WHEN tier = 1 THEN computed_tax ELSE 0 END)
+                 / SUM(CASE WHEN tier = 1 THEN sale_price ELSE 0 END)
+            ELSE NULL
+        END AS building_effective_rate_tier1,
+        CASE
+            WHEN SUM(curmkttot) > 0 THEN SUM(computed_tax) / SUM(curmkttot)
+            ELSE NULL
+        END AS building_effective_rate_tier2,
+        ANY_VALUE(units_mapped.pluto_borough) AS pluto_borough_2letter,
+        -- ANY_VALUE, not an aggregate over unit addresses -- condo units
+        -- share one PLUTO billing-lot row and thus one building address by
+        -- construction (see units_mapped's join above); non-condo lots are
+        -- already 1 unit = 1 building.
+        ANY_VALUE(pluto_address) AS address,
+        -- A building's units are overwhelmingly one tax class (mixed-class
+        -- buildings are rare); mode() picks the class that best represents
+        -- the building for the popup/filter UI rather than an arbitrary row.
+        mode(class_prefix) AS tax_class,
+        MAX(CASE WHEN tier = 1 THEN sale_date END) AS tier1_last_sale_date
+    FROM units_mapped
+    GROUP BY pluto_bbl
 )
 SELECT
-    pluto_bbl,
-    ANY_VALUE(boro) AS boro,
-    ANY_VALUE(block) AS block,
-    COUNT(*) AS unit_count,
-    SUM(computed_tax) AS building_tax,
-    SUM(curmkttot) AS building_dof_market_value,
-    SUM(CASE WHEN tier = 1 THEN computed_tax ELSE 0 END) AS tier1_tax,
-    SUM(CASE WHEN tier = 1 THEN sale_price ELSE 0 END) AS tier1_sale_basis,
-    COUNT(*) FILTER (WHERE tier = 1) AS tier1_unit_count,
+    building_base.*,
+    -- "For scale" popup comparison: what fraction of this building's peers
+    -- (same borough + tax class, among tier-1 sale-verified buildings only)
+    -- pay a HIGHER effective rate. ORDER BY ... DESC means the
+    -- highest-rate peer gets percent_rank 0 and the lowest-rate peer
+    -- approaches 1, i.e. this value already reads as "fraction of peers
+    -- with a higher rate than this building."
     CASE
-        WHEN SUM(CASE WHEN tier = 1 THEN sale_price ELSE 0 END) > 0
-        THEN SUM(CASE WHEN tier = 1 THEN computed_tax ELSE 0 END)
-             / SUM(CASE WHEN tier = 1 THEN sale_price ELSE 0 END)
+        WHEN building_effective_rate_tier1 IS NOT NULL
+        THEN ROUND(100 * PERCENT_RANK() OVER (
+            PARTITION BY pluto_borough_2letter, tax_class
+            ORDER BY building_effective_rate_tier1 DESC
+        ))
         ELSE NULL
-    END AS building_effective_rate_tier1,
-    CASE
-        WHEN SUM(curmkttot) > 0 THEN SUM(computed_tax) / SUM(curmkttot)
-        ELSE NULL
-    END AS building_effective_rate_tier2,
-    ANY_VALUE(units_mapped.pluto_borough) AS pluto_borough_2letter
-FROM units_mapped
-GROUP BY pluto_bbl
+    END AS tier1_pctile_pays_less_than
+FROM building_base
 """
 
 

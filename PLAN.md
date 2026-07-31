@@ -5,15 +5,41 @@
 - **Environment**: Python venv at `.venv/` (duckdb, pandas, pyarrow, requests,
   python-dotenv installed). `duckdb`, `tippecanoe`, `ogr2ogr` installed via
   Homebrew. Socrata app token in `.env` as `SOCRATA_APP_TOKEN` (gitignored;
-  `set -a; source .env; set +a` before running fetch scripts).
-- **Milestone 1 (data pipeline): DONE.** `pipeline/01`–`05` run end-to-end,
-  full citywide scale (1,164,670 unit rows, 857,253 building rows), see
+  `set -a; source .env; set +a` before running fetch scripts). Site at
+  `site/` is Vite + TypeScript, no framework; `npm install && npm run dev`
+  (dev-sample tiles) or `npm run build && npm run preview` (full citywide
+  tiles).
+- **Milestone 1 (data pipeline): DONE**, with a post-hoc correction found
+  during milestone-3 map work. `pipeline/01`–`05` run end-to-end, full
+  citywide scale (1,164,670 unit rows, 857,253 building rows), see
   `pipeline/README.md` for the run order. Validated: Griffin penthouse
   computes to 0.35% effective rate against its real sale (script-asserted),
   and the "expensive = lower rate" pattern holds citywide by sale-price
   decile for class 1 and class 2, not just as an anecdote. Outputs live in
   `data/cache/*.parquet` (gitignored — re-run pipeline to regenerate, ~15 min
   full citywide fetch + a few min compute).
+  - **Correction (2026-07-30):** the nominal/non-arms-length sale filter
+    (`MIN_ARMS_LENGTH_SALE`, a flat $10K floor) wasn't nearly enough --
+    found via the new map's bivariate styling work, which made a $130,000
+    "sale" matched to a $1.054B building (BBL 1011300001, tier-1 rate
+    39,586%) visually obvious. Fixed in `pipeline/04_build_effective_rates.py`
+    with two additions: `MIN_SALE_TO_VALUE_RATIO` (sale price must be >= 1%
+    of the unit's own DOF market value -- one-sided, only rejects sale <<
+    value, never sale >> value, since the latter is exactly the legitimate
+    disparity story) and `EFFECTIVE_RATE_CEILING` (a 25% backstop on the
+    computed rate itself, since the >5% tail has no clean natural break
+    between "real distressed sale" and "nominal transfer" to threshold on).
+    Also surfaced that `valuation_fy2026` isn't unique per (boro, block,
+    lot) -- 4,133 keys citywide have multiple rows, patterns ranging from
+    a simple real-record-plus-zero-value-placeholder to a few dozen keys
+    with many (up to 542) nonzero sibling rows that aren't yet understood.
+    Worked around narrowly (`valuation_keymax`, MAX per key) for the sale
+    hookup; the broader multi-row question may still affect building-level
+    tax/value aggregation and hasn't been investigated further -- flagged,
+    not resolved. `pipeline/05_validate.py` now asserts <0.1% of tier-1
+    units exceed a 100%-of-sale-price rate (was 0.59%, now 0%) as a
+    regression guard. Re-ran 04→05→07→08 after the fix; Griffin assertion
+    still passes (0.3486%), tier-1 coverage barely moved (30.4%→29.9%).
 - **Milestone 2 (tile build): DONE.** `pipeline/06`–`08` fetch real parcel
   geometry (PLUTO has none — see corrected Data sources), join it to
   `building_effective_rates.parquet`, and build the PMTiles tileset. Output:
@@ -21,11 +47,299 @@
   GitHub Pages verified to correctly serve HTTP range requests. See
   Milestones below for full detail and what's explicitly deferred (H3
   low-zoom binning).
-- **Next up: Milestone 3** (map MVP — static color-by-rate map, no
-  interactivity). Not started.
+- **Milestone 3 (map MVP): DONE**, iterated past the original design after
+  user feedback. Vite + TS scaffold in `site/` from scratch; MapLibre GL JS
+  + `pmtiles` protocol, OpenFreeMap "positron" as the free no-key basemap.
+  Current design (see `site/src/colors.ts`/`main.ts`/`legend.ts`):
+  - **Tier 2 (DOF-fallback, ~73% of buildings) is hidden by default**, not
+    just visually muted. Rationale from a user conversation: DOF's own
+    market value for co-ops/condos is already the deflated number the
+    disparity comes from, so tax/DOF-value nets out to a near-uniform
+    ~5.6% and doesn't show the story at all -- displaying it at full
+    weight let 73% of untrustworthy data visually dilute the 27% that
+    actually proves the pattern. A thin gray outline keeps those buildings
+    visible as footprints (the city shouldn't look like it's missing
+    buildings); a legend checkbox toggles the filled/hatched view back on.
+  - **Tier 1 (sale-verified) is colored by the divergence between rate and
+    value**, not a plain rate ramp and not an independent rate x value
+    bivariate grid (tried first, rejected by the user: muddy middle,
+    9-box legend was a puzzle). Buckets mkt/r1 into terciles and colors by
+    (valueTier - rateTier) on a validated 5-step diverging palette (blue =
+    value outpaces rate, i.e. the headline case; red = rate outpaces
+    value; neutral = proportionate) -- a real diverging pair per the
+    dataviz skill (equal step count per arm, CVD ΔE 27-29 between
+    meaningfully different steps), collapsing to one labeled bar in the
+    legend instead of a grid.
+  - No popups/search/filters yet (milestone 4). `bbl` renders in tile
+    properties as a decimal-formatted string (e.g.
+    `"1000010010.00000000"`) — fixed in milestone 4, see below.
+  Verified in an actual headless-Chromium render (Playwright, added as a
+  devDependency) against both the Manhattan dev sample and the real
+  citywide production tileset throughout. Two build gotchas hit along the
+  way, both of which silently produced a **blank map with no console
+  errors** until diagnosed:
+  - MapLibre circle layers do **not** skip non-point geometry on their
+    own (unlike fill layers) -- they'll draw a circle at every vertex of a
+    matching polygon. The point-fallback circle layers (meant for the
+    ~0.04% of buildings that only resolved to a centroid) were drawing a
+    dot on every vertex of every tier1/tier2 polygon until an explicit
+    `["==", ["geometry-type"], "Point"]` filter was added.
+  - maplibre-gl v6 resolves its worker script relative to its own bundle's
+    `import.meta.url` at runtime, which Vite's static analysis can't
+    follow — the worker (and the shared chunk it imports) were silently
+    missing from both the dev server and `dist/`. Fixed by vendoring a
+    verbatim copy (`site/scripts/copy-maplibre-worker.mjs`, runs on
+    `postinstall`) and pointing maplibre-gl at it via `setWorkerUrl()` in
+    `main.ts`. Worth knowing if maplibre-gl is ever upgraded.
+- **Milestone 4 (interactivity: popups, search, filters): DONE.**
+  - **`bbl` fixed at the source**: PLUTO's `bbl` comes back from Socrata
+    already decimal-formatted (`"1010307501.00000000"` — Socrata's own
+    `number`-type serialization, confirmed by checking `pluto.parquet`
+    directly, not a downstream GeoJSON artifact). Normalized once with
+    `SPLIT_PART(bbl, '.', 1)` in `04_build_effective_rates.py`'s `pluto`
+    CTE so every downstream consumer (tiles, search index) gets a clean id
+    for free. Re-ran `04→05→07→08` (all local/cached, no re-fetch needed).
+  - **New per-building fields** threaded through `04`/`07`/`08`: `address`
+    (from PLUTO, `ANY_VALUE` per building), `tax_class` (`mode()` of the
+    building's unit tax classes — needed for the filter UI), and two new
+    `04` aggregates: `tier1_last_sale_date` (`MAX` sale date among the
+    building's tier-1 units) and `tier1_pctile_pays_less_than` (a
+    `PERCENT_RANK() OVER (PARTITION BY borough, tax_class ORDER BY
+    building_effective_rate_tier1 DESC)` — "this building pays a lower
+    rate than X% of same-borough, same-class tier-1 peers", feeding the
+    popup's "for scale" line).
+  - **Tile schema size fight**: naively shipping the new fields (esp.
+    `address`, a unique string per building that doesn't dedupe) at every
+    zoom pushed the citywide tileset from the milestone-2 baseline of
+    103MB to 129MB — over GitHub's 100MB hard push-block. Root cause: each
+    zoom level of the tile pyramid stores its own near-complete copy of
+    the feature set, so per-feature field cost is multiplied by however
+    many zoom levels carry it. Fixed by restricting detail fields
+    (`addr`/`sale`/`saledt`/`pctl`/`nsale`) to a **single** top zoom
+    (`DETAIL_ZOOM`) rather than a z14-16 band, and capping the tileset's
+    own native max zoom at 15 (MapLibre's `maxZoom: 18` in `main.ts`
+    just overzooms the z15 tile beyond that, rather than paying for a
+    whole extra full-resolution pyramid level). `08_build_tileset.py` now
+    runs two tippecanoe passes (lean overview z9-14, full-field detail
+    z15) merged with `tile-join`, since tippecanoe has no
+    single-invocation per-zoom field filter. Final citywide size: **74MB**.
+  - **Search** (`site/src/search.ts`): citywide index
+    (`site/public/search-index.json.gz`, 856,389 addresses, array-of-arrays
+    not array-of-objects to avoid repeating key names 856K times) built by
+    `08_build_tileset.py` alongside the tileset, gzip-compressed per
+    PLAN.md's performance-strategy bullet. Client fetches + feeds it to
+    MiniSearch (lazy dynamic `import()`, not a static one, so the library
+    itself isn't in the initial bundle) on first search-box focus, never
+    on first paint. Two things found only by testing against the full
+    856K-row citywide index (the 42K-row Manhattan dev sample didn't
+    surface either):
+    - Vite's dev/preview server (and possibly GitHub Pages — unconfirmed)
+      recognizes the `.gz` extension and transparently decodes it,
+      setting `Content-Encoding: gzip` on the response — so `fetch()`
+      already hands back decompressed bytes, and piping them through a
+      second `DecompressionStream("gzip")` throws. Fixed by checking
+      `res.headers.get("content-encoding")` and only manually
+      decompressing when the server didn't already do it.
+    - `MiniSearch.addAll()` over 856K documents blocks the main thread for
+      **~10 seconds** (freezing the whole page, not just the search box).
+      Switched to `addAllAsync()` (chunked, yields between batches) so the
+      map stays interactive during the build, at the cost of a somewhat
+      longer wall-clock time (~10-20s first use). This first-use latency
+      is a known v1 limitation, not resolved — a real fix would build and
+      serialize the MiniSearch index at pipeline time
+      (`miniSearch.toJSON()` / `loadJSON()`) instead of reindexing
+      client-side; flagged for a future pass, not done here since it's
+      outside interactivity scope. A "Loading search index…" message
+      covers the wait so it doesn't read as broken.
+  - **Popups** (`site/src/popup.ts`): click (or a search selection) opens
+    a popup built straight from tile properties — no extra fetch, per
+    PLAN.md's performance strategy #1. Shows address, borough, tax class,
+    tier basis (sale-verified vs. DOF-value fallback, labeled in plain
+    language, never as "tier1"/"t1"), computed tax, effective rate, and
+    the percentile "for scale" line. One real bug caught only by clicking
+    an actual dense building in the browser, not by reading the code: the
+    `sale` tile field is `tier1_sale_basis`, the **sum** of sale prices
+    across every unit in the building that sold 2016-2025 (existing
+    milestone-1 aggregation, used correctly as a rate denominator) — for
+    220 Central Park South (116 sold units) that summed to $4.1B, and an
+    early version of the popup displayed it unqualified as "Sold for
+    $4118M", reading as a single (wrong) transaction. Fixed by adding a
+    `nsale` tile field (`tier1_unit_count`) and branching the label:
+    "Sold for $X on {date}" for a single sale, "Combined price, N units
+    sold here" otherwise.
+  - **Filters** (`site/src/filters.ts`): borough and tax-class toggle
+    chips, combined with each layer's existing tier/geometry-type filter
+    via `map.setFilter`. A selected-everything category is omitted from
+    the filter expression entirely (not turned into an `in [all 5
+    values]` clause) so the rare building with a missing `boro`/`cls`
+    doesn't vanish under the default "nothing deselected" state — an `in`
+    filter only matches non-null fields.
+  - **Dev-loop gotcha**: `08 --sample` writes to `data/cache/dev_sample.
+    pmtiles`, but `npm run dev` serves `site/public/tiles/dev-sample.
+    pmtiles` — a separate, gitignored copy the build script does not
+    write directly. Lost real time here mid-milestone: several rebuilds'
+    worth of browser checks were silently exercising a stale
+    pre-fix tileset (still showing the decimal `bbl`) because this copy
+    step was missed. Now documented in `pipeline/README.md`.
+  Verified via headless-Chromium (Playwright) against both the Manhattan
+  dev sample and the real citywide production build (`npm run build` +
+  `npm run preview`) — clicking Central Park South buildings, searching
+  "central park", toggling borough/class filters, and inspecting actual
+  `queryRenderedFeatures` output at both z9-ish (overview, lean fields)
+  and z15 (detail, full fields) to confirm the zoom-band split behaves as
+  designed.
+- **Milestone 5 (narrative layer): DONE.** Three design decisions were
+  checked with the user up front (see `AskUserQuestion` in this session)
+  before building: the scrollytelling mechanic is a **pinned live map**
+  (not a separate map instance or plain static text), the intro is a
+  **full-screen overlay** shown before the free-roam chrome, and the
+  scatter's data volume is a **precomputed random sample** (not full
+  population or hexbin).
+  - **One map instance, not two.** `#map` moved from `position: absolute`
+    (within `#app`) to `position: fixed` (full viewport) so the exact same
+    MapLibre instance serves both the scripted intro camera moves and the
+    free-roam experience afterward — `story.ts` calls `map.flyTo`/
+    `map.fitBounds` on it directly, never spins up a second map. An
+    `IntersectionObserver` per `.story-step` with a shrunk `rootMargin`
+    (`-45% 0px -45% 0px`, a "viewport center line") tracks exactly one
+    active step at a time and re-fires on scroll-up too, so reversing
+    through the story un-does later steps' effects (chart hides, camera
+    flies back) instead of only working one direction.
+  - **The on-screen zoom +/- control isn't gated by disabling MapLibre's
+    interaction handlers.** `story.ts` disables `scrollZoom`/`dragPan`/etc.
+    so the user can't fight the scripted camera, but `NavigationControl`'s
+    buttons call `map.zoomIn()`/`zoomOut()` directly and ignore all of
+    that — caught only by testing an actual click during the intro, not
+    by reading the handler-disable code. Fixed by hiding
+    `.maplibregl-ctrl-top-right` via a `body.story-active` CSS rule
+    alongside the rest of the free-roam chrome (header/legend), not by
+    trying to intercept the control's own click handler.
+  - **Handoff out of the story is a deliberate button click**
+    (`#story-enter`, "Start exploring the map"), not an automatic trigger
+    when the last step scrolls into view. Reaching the last step still
+    flies the camera back to the citywide view (a preview), but doesn't
+    collapse the story or unlock map interaction until clicked — auto-
+    triggering on scroll-into-view would otherwise yank the layout out
+    from under the user mid-read the instant the last card centered.
+    Clicking it removes `body.story-active`, adds `body.story-done` (CSS
+    collapses `#story` to `display: none` and locks `body` scroll, since
+    the fixed map is now the sole scrollable/zoomable surface), and
+    re-enables the map's interaction handlers.
+  - **Scatter data is unit-lot grain, not building grain — a real bug
+    caught before it shipped, not after.** The tileset's building-level
+    `building_effective_rate_tier1`/`tier1_sale_basis` (used everywhere
+    else, e.g. the popup) aggregate a *sum* of every unit that sold
+    2016–2025 — for 220 Central Park South that's a combined $4.1B across
+    116 units, not Ken Griffin's own $239,958,219 sale. Plotting that
+    aggregate would have put Griffin's dot at the wrong x-position relative
+    to the exact anchor numbers this same document validates in "The
+    story" above. Fixed by having `pipeline/08_build_tileset.py`'s new
+    `build_scatter_sample()` read `unit_effective_rates.parquet` (unit-lot
+    grain, one row per DOF unit — the pipeline's original, pre-aggregation
+    table) instead of `buildings_geom.parquet`, matching the granularity
+    the Furman Center comparison itself uses ("for co-op/condo **units**
+    sold in 2025..."). Griffin's own unit-lot (boro=1, block=1030,
+    lot=1082) is force-included in the sample regardless of the random
+    draw, same reasoning as the Griffin assertions in `05_validate.py`.
+  - **Sample**: capped at 4,000 sale-verified unit-lots per tax class
+    (1 and 2 only — "the disparity is mainly a class-1-vs-class-2 story,"
+    per Core metric below — which also keeps the chart's categorical
+    legend to 2 validated slots instead of needing an "other" bucket),
+    ordered by `hash(boro||block||lot)` for a reproducible-without-a-seed
+    sample. Citywide output: 8,000 points, 0.07MB gzipped
+    (`site/public/scatter-sample.json.gz`); dev/Manhattan-only counterpart
+    at `site/public/scatter-sample-dev.json.gz` (gitignored, same pattern
+    as the search index's `-sample` file).
+  - **Bundle-size regression caught by rebuilding, not assumed.** The
+    milestone's own name says "lazy loaded," but the first working version
+    statically `import`ed `scatter.ts` (and therefore
+    `@observablehq/plot` and its d3 sub-dependencies) from `story.ts` --
+    TypeScript happily compiled it and Playwright didn't catch it since
+    nothing about it changes runtime *behavior*, only the bundle
+    contents. `npm run build`'s own output surfaced it: one 1.2MB/339KB-
+    gzipped chunk, over the Performance strategy's <300KB budget. Fixed
+    by dynamic `import("./scatter")` inside `story.ts`'s `showChart()`,
+    the same lazy-import pattern `search.ts` already uses for MiniSearch —
+    splits Plot into its own 240KB/84KB-gzipped chunk, fetched only once
+    the chart step is actually reached, and brings the main chunk back to
+    255.69KB gzipped (under budget). Re-verified after the fix that the
+    scatter chunk is genuinely fetched only on reaching the chart step,
+    not on page load.
+  - **Chart**: Observable Plot scatter, log-scale sale price (x) vs.
+    effective rate (y, capped/clamped at 8% -- the meaningful bulk of both
+    classes sits under ~3%, per real-data exploration during this
+    milestone; a few outliers near the 25% ceiling backstop would
+    otherwise flatten the scale), color by tax class (validated
+    blue/green categorical pair, `node scripts/validate_palette.js
+    "#2a78d6,#008300" --mode light --pairs all` -- all checks pass).
+    Griffin's own point gets a surface-color halo + ring (dataviz skill's
+    ">=8px end-marker" spec) and a direct label anchored up-left (`dx:-12,
+    textAnchor:"end"`) so it doesn't clip off the chart's right edge,
+    since his sale price sits near the top of the citywide distribution.
+  - Verified via headless-Chromium (Playwright) against both the
+    Manhattan dev sample and the full citywide production build (`npm run
+    build` + `npm run preview`): scrolled forward through all 4 steps and
+    backward again (chart/camera effects both directions), clicked
+    "Skip intro," clicked "Start exploring the map" and confirmed
+    `body` class flips, the on-screen zoom control re-enables
+    (`map.getZoom()` actually changes after a wheel event, not just that
+    the handler was called), a building click still opens a popup
+    post-handoff (milestone 4 regression check), and — against the real
+    citywide build specifically — that the scatter chunk and
+    `scatter-sample.json.gz` are fetched only once the chart step is
+    reached, never on first paint.
+- **Milestone 6 (performance gate): DONE, with a documented budget gap.**
+  Tested against the citywide production build (`npm run build && npm run
+  preview`): Lighthouse Performance **97** (target ≥90, pass), JS gzipped
+  before interaction **381.5KB** (target <300KB), first tiles painted on a
+  real (CDP, not Lighthouse-simulated) throttled connection **8.5s** on
+  Lighthouse's own pessimistic "Slow 4G" profile / **3.1s** on a more
+  typical regular-4G profile (target <1.5s in both cases). Full
+  methodology, root-cause analysis, and a phased roadmap for actually
+  closing the remaining gap: see `PERFORMANCE.md`.
+  - **Two real fixes shipped, no tradeoffs.** (1) MapLibre still builds GL
+    buckets/buffers for a layer with `visibility: "none"` — hiding is a
+    render-time switch, not a tile-processing one — so the tier2 layers
+    (hidden by default since Milestone 3, ~73% of all buildings) were
+    paying full bucket-build cost on every load for something invisible on
+    first paint. `main.ts`'s `ensureTier2Layers()` now defers adding those
+    3 layers until the legend checkbox is actually switched on. Total
+    Blocking Time: 2690ms → 20ms; **Lighthouse score: 63 → 97**. (2)
+    `map.on('load')` → `map.on('style.load')` — `load` fires only after the
+    basemap's own first visually-complete render, needlessly serializing
+    our own buildings-tile fetch behind a live third-party basemap's full
+    readiness instead of starting both in parallel; plus a `preconnect`
+    hint to the basemap host. Together cut the Slow-4G first-tiles number
+    from 10.1s → 8.5s.
+  - **The other two budget misses are architectural, not bugs**, traced to
+    two Milestone-3 decisions, discovered only now because this is the
+    first time either number was measured against a real build: MapLibre GL
+    JS's official bundle is ~380KB gzip minimum (main + worker chunk) before
+    any of our own code, not tree-shakeable; and OpenFreeMap's live
+    "positron" basemap pulls sprite+fonts+~900KB of shared vector-tile data
+    (the tile bytes are fixed by OpenFreeMap's *shared* planet tileset, not
+    the chosen style, so a lighter style wouldn't touch the dominant cost)
+    from a third-party host on the same throttled pipe as everything else.
+    At 1.6Mbps throttled bandwidth, ~1.4MB of combined payload before first
+    paint is arithmetically incompatible with a 1.5s budget regardless of
+    further code-level tuning. Per a user decision on 2026-07-31: don't
+    force a rendering-stack rewrite now — ship with the measured numbers,
+    documented in `PERFORMANCE.md`'s roadmap (self-host a minimal basemap
+    style; self-hosted raster-tile basemap instead of the live vector one;
+    replacing MapLibre GL JS with a lighter custom renderer, the only lever
+    that actually attacks the JS-size floor) for a future revisit if the
+    site gets real traffic.
+  - Also found and fixed along the way: milestone 5's own bundle-size
+    accounting (255.69KB gzip, recorded as "under budget" in that
+    milestone's status) only counted the main entry chunk and missed the
+    ~133KB `maplibre-gl-shared.mjs` worker chunk that also loads before
+    interaction — the real total was always ~381KB, not caught until this
+    milestone's explicit network-request tally.
+- **Next up: Milestone 7** (polish + deploy to GitHub Pages + methodology
+  README). Not started; check in with the user before starting.
 - Work style: check in with the user after each milestone before proceeding
   to the next (their stated preference) — don't auto-continue through
-  milestones 3–7 without a pause.
+  milestones 4–7 without a pause.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and
@@ -397,11 +711,16 @@ agent doesn't spend budget building things nobody asked for:
    built-in feature-dropping/coalescing does the zoom-dependent
    generalization job instead; revisit only if low-zoom density still looks
    bad once rendered (Milestone 3).
-3. Map MVP: static color-by-rate map, no interactivity.
-4. Interactivity: popups (from tile properties, no extra fetch), lazy-loaded
-   search, filters.
-5. Narrative layer: scrollytelling intro + Observable Plot scatter (lazy
-   loaded).
+3. ✅ **DONE** — Map MVP: static color-by-rate map, no interactivity. See
+   Status above for detail and the two build gotchas hit along the way.
+4. ✅ **DONE** — Interactivity: popups (from tile properties, no extra
+   fetch), lazy-loaded search, filters. See Status above for detail,
+   including the tile-schema size fight and the search-index main-thread
+   latency flagged as a known v1 limitation.
+5. ✅ **DONE** — Narrative layer: scrollytelling intro + Observable Plot
+   scatter (lazy loaded). See Status above for the pinned-live-map
+   mechanic, the unit-lot-grain scatter-data bug caught before shipping,
+   and the bundle-size fix.
 6. Performance gate: Lighthouse + throttled-network pass against the budget
    above; fix before calling it done, not after.
 7. Polish + deploy to GitHub Pages + README with methodology.

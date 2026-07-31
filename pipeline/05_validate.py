@@ -73,6 +73,19 @@ def main():
     # billing-lot placeholders are filtered upstream in 04_build_effective_rates.py.
     all_pass &= check("No more than 3% of units have a null effective_rate", null_rate_units / total_units < 0.03)
 
+    # Guard against nominal/non-arms-length sales slipping through the
+    # sale-price sanity filter (see MIN_SALE_TO_VALUE_RATIO in
+    # 04_build_effective_rates.py) -- a sale-verified effective rate over
+    # 100% of sale price is never a real transaction; found via a $130K
+    # "sale" matched to a $1.054B building (BBL 1011300001) that a flat
+    # dollar floor alone didn't catch.
+    tier1_outliers = con.sql("SELECT COUNT(*) FROM units WHERE tier = 1 AND effective_rate > 1.0").fetchone()[0]
+    all_pass &= check(
+        "Fewer than 0.1% of tier-1 units have effective_rate > 100% (nominal-sale check)",
+        tier1_outliers / tier1_units < 0.001,
+        f"{tier1_outliers:,} of {tier1_units:,} ({tier1_outliers / tier1_units:.2%})",
+    )
+
     # class-2 vs class-1 DOF-relative rate sanity check (should be ~5.6% vs ~1.2% per PLAN.md)
     class_avg = con.sql("""
         SELECT class_prefix, AVG(curtxbtot * class_rate / NULLIF(curmkttot, 0)) AS avg_dof_relative_rate
