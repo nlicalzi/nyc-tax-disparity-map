@@ -193,10 +193,17 @@ recommendation to do it now.
   (e.g. Cloudflare), or moving hosts entirely — both are hosting-strategy
   decisions, not something to slip in as a drive-by fix; flagging here
   rather than implementing something that silently wouldn't work.
-- Re-test on GitHub Pages' actual Fastly-backed CDN once deployed
-  (Milestone 7) — Brotli support there is plausible but unverified from
-  this environment; would reduce the JS-size gap somewhat (see Brotli
-  numbers above) without any code change.
+- ~~Re-test on GitHub Pages' actual Fastly-backed CDN once deployed
+  (Milestone 7)~~ — **done, no win available.** `curl` against the live
+  deployed main JS chunk with `Accept-Encoding: br, gzip` gets back
+  `content-encoding: gzip` — GitHub Pages' Fastly origin does not serve
+  Brotli even when the client advertises support, so the ~316KB
+  max-quality-Brotli number cited above isn't achievable on this host. Also
+  re-ran `check-throttled-perf.mjs --url=<live site>` against the real
+  deployment: first-tiles-painted came back 3.9s (regular4g) / 9.3s
+  (slow4g) — slightly worse than the localhost numbers in the table above
+  (3.1s / 8.5s), consistent with added real-internet RTT/DNS/TLS on top of
+  the same architectural bottleneck, not a new regression.
 
 ## Recommendation
 

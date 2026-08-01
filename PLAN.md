@@ -335,11 +335,104 @@
     ~133KB `maplibre-gl-shared.mjs` worker chunk that also loads before
     interaction — the real total was always ~381KB, not caught until this
     milestone's explicit network-request tally.
-- **Next up: Milestone 7** (polish + deploy to GitHub Pages + methodology
-  README). Not started; check in with the user before starting.
+- **Milestone 7 (polish + deploy + methodology): DONE.** Checked in with the
+  user before starting (their stated preference) and again mid-milestone
+  when a real bug turned up outside the original scope; both check-ins
+  resolved before proceeding.
+  - **Repo made public.** GitHub Pages requires either a public repo or a
+    paid GitHub plan for private-repo Pages; confirmed no secrets were ever
+    committed (`.env` always gitignored, only `.env.example` tracked) before
+    flipping visibility. `gh repo edit --visibility public
+    --accept-visibility-change-consequences`.
+  - **Deploy mechanism: GitHub Actions build+deploy**
+    (`.github/workflows/deploy.yml`), not a committed `dist/`/`gh-pages`
+    branch — `npm ci && npm run build` in `site/` on every push to `main`,
+    published via `actions/upload-pages-artifact` +
+    `actions/deploy-pages`. Fits Vite's existing `dist/`-gitignored setup;
+    no extra CI data-fetch step needed since `buildings.pmtiles`/
+    `search-index.json.gz`/`scatter-sample.json.gz` are already committed
+    source assets, not build outputs. Pages enabled via `gh api -X POST
+    .../pages -f build_type=workflow` (had to run *after* the first push --
+    the workflow's first run failed with `Get Pages site failed... Not
+    Found` because Pages wasn't enabled yet when that push triggered it;
+    re-ran via `gh workflow run deploy.yml` once Pages was on).
+  - **`vite.config.ts` needed an explicit `base: "/nyc-tax-disparity-map/"`**
+    for correct asset paths on a GitHub Pages *project* page (not a
+    user/org root page) -- unset, it defaults to `/`, which breaks on
+    `<username>.github.io/<repo>/`. The app's own asset-path code
+    (`main.ts`/`search.ts`/`scatter.ts`) already read `import.meta.env.BASE_URL`
+    rather than hardcoding `/`, so this one config line was the only
+    change needed -- confirmed via `vite preview` that built HTML/JS/CSS
+    paths and a ranged PMTiles request all resolved under the base path
+    before deploying.
+  - **The live URL is the custom domain, not `nlicalzi.github.io`.**
+    The account's user-level Pages site (`nlicalzi.github.io` repo) already
+    has `www.nlicalzi.com` configured as a custom domain (pre-existing,
+    unrelated to this project) -- GitHub Pages automatically extends a
+    user-site custom domain to every project site under that account, so
+    `nlicalzi.github.io/nyc-tax-disparity-map/` 301-redirects to
+    **`https://www.nlicalzi.com/nyc-tax-disparity-map/`**, confirmed as the
+    canonical URL (`gh api .../pages` reports it as `html_url`). Both URLs
+    work; the custom domain is what's linked from README.
+  - **Verified against the real deployment, not just localhost**: PMTiles
+    range requests (`HTTP/2 206` with correct `Content-Range`, confirmed on
+    both the redirect-followed custom domain and the raw `.github.io` URL),
+    full Playwright run against the live site (map renders, methodology
+    panel expands, search → popup → filter chip all work, zero console
+    errors). Also resolved two things only visible against the real CDN:
+    GitHub Pages' Fastly origin does **not** serve Brotli even when the
+    client advertises support (`Accept-Encoding: br, gzip` still comes back
+    `content-encoding: gzip`) -- closes out PERFORMANCE.md's "unverified"
+    Brotli question, no win available there. And the search index's
+    known first-use latency (PLAN.md's existing ~10-20s local estimate)
+    measured **~32s** over the real internet on first use -- slower than
+    local, from the combination of a bigger real download + GitHub Pages
+    not labeling the `.json.gz` response `content-encoding: gzip` (so the
+    client's manual `DecompressionStream` fallback path runs, same
+    known-limitation code path documented in Milestone 4, just slower over
+    a real network than localhost). Still the same accepted v1 limitation,
+    not a new bug -- not fixed here, per that milestone's existing framing.
+    See PERFORMANCE.md for the full re-verification writeup and updated
+    throttled-perf numbers against the live site (3.9s regular4g / 9.3s
+    slow4g first-tiles-painted, vs. 3.1s/8.5s measured locally -- slightly
+    worse from real internet RTT/DNS/TLS on top of the same architectural
+    bottleneck, not a regression).
+  - **New methodology footer** (`site/src/methodology.ts`, wired in
+    `main.ts`): a collapsed-by-default `<details>` panel, bottom-right
+    (symmetric with the legend's bottom-left), covering data vintage,
+    the tax/rate formula, and a link back to the repo -- per
+    PERFORMANCE.md's recommendation that this live in the site itself, not
+    just the README. Plain `<details>`/`<summary>`, not hand-rolled toggle
+    JS, since it's static content with no state anything else needs to
+    react to.
+  - **Real bug found and fixed mid-milestone, not just deploy plumbing**:
+    while verifying the deploy didn't break existing interactivity,
+    selecting a search result would sometimes never open a popup. Root
+    cause: the search-select handler waited on MapLibre's map-wide `idle`
+    event, which only fires once *every* source -- including the live,
+    continuously-tile-fetching OpenFreeMap basemap -- has nothing pending,
+    not just our own buildings source. Confirmed via timing trials this
+    doesn't hang forever under normal conditions (an earlier, overstated
+    read of the bug during initial investigation) but is measurably slower
+    and coupled to third-party basemap load state for no reason. Fixed by
+    scoping the wait to the buildings source specifically
+    (`whenBuildingsSourceLoaded()` in `main.ts`, mirrors the existing
+    `first-tiles-painted` perf-mark's `sourcedata`/`isSourceLoaded` check).
+    Confirmed via repeated trials: ~3.2-3.3s consistently after the fix vs.
+    ~4-4.7s before, and no longer coupled to basemap load state. Confirmed
+    this reproduces identically on the pre-M7 `main` build too (not a
+    regression from this milestone's other changes) by temporarily
+    swapping in the old file and re-testing.
+  - `site/public/.nojekyll` added (GitHub Pages runs Jekyll by default,
+    which can interfere with dotfile-adjacent paths; harmless but standard
+    to disable for a plain static build).
+  - README updated: was still describing milestones 1-4 as the full state;
+    now reflects all 7, adds the live URL, and documents the deploy
+    mechanism.
 - Work style: check in with the user after each milestone before proceeding
-  to the next (their stated preference) — don't auto-continue through
-  milestones 4–7 without a pause.
+  to the next (their stated preference) -- held for all 7 milestones,
+  including a genuine mid-milestone check-in in Milestone 7 when scope
+  expanded beyond the original plan (fixing the search-popup bug).
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and
@@ -721,9 +814,15 @@ agent doesn't spend budget building things nobody asked for:
    scatter (lazy loaded). See Status above for the pinned-live-map
    mechanic, the unit-lot-grain scatter-data bug caught before shipping,
    and the bundle-size fix.
-6. Performance gate: Lighthouse + throttled-network pass against the budget
-   above; fix before calling it done, not after.
-7. Polish + deploy to GitHub Pages + README with methodology.
+6. ✅ **DONE** — Performance gate: Lighthouse + throttled-network pass
+   against the budget above. See Status above and `PERFORMANCE.md` for full
+   results, root-cause analysis, and the documented budget gap (JS size and
+   first-tiles-painted are architectural, not bugs; shipped with the
+   measured numbers per an explicit user decision).
+7. ✅ **DONE** — Polish + deploy to GitHub Pages + methodology footer. See
+   Status above for the deploy mechanism, the custom-domain URL, the
+   real-CDN verification, and the search-popup bug found and fixed along
+   the way.
 
 ## Risks / open questions
 - **Tax paid is computed, not scraped** — must be labeled clearly to avoid

@@ -5,7 +5,10 @@ lower *effective* tax rates for ultra-luxury condos/co-ops than for modest
 homes — because co-ops and condos are assessed via the "comparable rental
 income" method rather than sale price.
 
-**Live site**: https://nlicalzi.github.io/nyc-tax-disparity-map/
+**Live site**: https://www.nlicalzi.com/nyc-tax-disparity-map/
+(`nlicalzi.github.io/nyc-tax-disparity-map/` also works — it 301-redirects
+here, since the account's root Pages site already has this custom domain
+configured, which GitHub extends to all project sites under the account)
 
 See [PLAN.md](./PLAN.md) for the full design doc and [PERFORMANCE.md](./PERFORMANCE.md)
 for the performance-gate results and roadmap.
