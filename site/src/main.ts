@@ -324,7 +324,20 @@ map.on("style.load", () => {
   // change, but filterController -- created here -- needs the callback at
   // construction time. Reassigned to the real implementation below.
   let refreshResults: () => void = () => {};
-  const filterController = createFilterController(map, filterableLayers, () => refreshResults());
+  // `setFilter` schedules a repaint but `queryRenderedFeatures` right after
+  // it (synchronously, same tick) can still reflect the *previous* filter
+  // state -- confirmed directly: after narrowing the divergence filter, an
+  // immediate refresh showed 134 buildings (essentially unfiltered), while
+  // a refresh forced a moment later showed the correct 2. Deferring to the
+  // next `render` event (fired once the map has actually redrawn against
+  // the new filter) instead of calling refreshResults synchronously fixes
+  // it; safe to queue repeatedly (each rapid filter change queues its own
+  // `once` listener, but each reads live state when it fires, so the very
+  // last one to fire always reflects the true final filter state).
+  function scheduleResultsRefresh() {
+    map.once("idle", () => refreshResults());
+  }
+  const filterController = createFilterController(map, filterableLayers, scheduleResultsRefresh);
   renderFilterControls(document.getElementById("filters")!, filterController);
 
   // Adds fill-tier2/fill-tier2-hatch/circle-tier2 the first time the legend
@@ -404,7 +417,7 @@ map.on("style.load", () => {
       for (const id of TIER2_LAYER_IDS) {
         if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
       }
-      refreshResults();
+      scheduleResultsRefresh();
     },
     isDivergenceSelected: filterController.isDivergenceSelected,
     onToggleDivergence: filterController.toggleDivergence,
@@ -514,12 +527,24 @@ map.on("style.load", () => {
     return [sx / ring.length, sy / ring.length];
   }
 
+  const DIVERGENCE_LAYERS = ["fill-tier1", "circle-tier1"];
+
   refreshResults = function refreshResultsImpl() {
     const filtered = filterController.isFiltered();
     resultsRoot.hidden = !filtered;
     if (!filtered) return;
 
-    const features = map.queryRenderedFeatures({ layers: CLICKABLE_LAYERS });
+    // tier2/nodata layers carry no divergence classification at all (only
+    // fill-tier1/circle-tier1 do -- see colors.ts), so their own MapLibre
+    // filter never excludes anything based on the divergence buckets.
+    // Querying them here once a divergence slice is selected would silently
+    // pad the list with every uncolored building still on screen, alongside
+    // the (correctly narrowed) tier-1 matches -- restrict to tier-1 layers
+    // in that case so the list actually matches what was selected.
+    const layers = filterController.isDivergenceNarrowed()
+      ? DIVERGENCE_LAYERS.filter((id) => CLICKABLE_LAYERS.includes(id))
+      : CLICKABLE_LAYERS;
+    const features = map.queryRenderedFeatures({ layers });
     const byBbl = new Map<string, ResultEntry>();
     for (const f of features) {
       const props = f.properties as BuildingProps;

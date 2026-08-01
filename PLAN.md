@@ -517,6 +517,44 @@
     Griffin callout, now this) -- factored into two shared helpers
     (`waitForBuildingPopup`, `flyToBuildingAndPopup`) in `main.ts`, all
     three call sites now share one implementation.
+  - **Two real bugs found by the user immediately after this shipped, both
+    fixed same-day (2026-08-01):**
+    1. **Wrong layers queried once the divergence axis was narrowed.**
+       tier2/nodata layers carry no divergence classification at all -- only
+       `fill-tier1`/`circle-tier1` do -- so their own MapLibre filter never
+       excludes anything based on the divergence buckets. The results query
+       unconditionally used `CLICKABLE_LAYERS` (all of them), so narrowing
+       to e.g. "most overtaxed" correctly narrowed the *map's* colored
+       tier-1 dots but the *panel* kept listing every uncolored tier-2/
+       nodata building still sitting on screen alongside them -- reported by
+       the user as "200 buildings" shown when the map visibly had ~0 colored
+       matches. Fixed with a new `filterController.isDivergenceNarrowed()`
+       getter: once true, the results query restricts to
+       `["fill-tier1", "circle-tier1"]` only, dropping tier2/nodata from the
+       list entirely rather than padding it with buildings that were never
+       part of the selected slice.
+    2. **`queryRenderedFeatures` right after `setFilter` can be stale.**
+       Even after fixing (1), the *first* narrow-to-one-bucket interaction
+       still showed a stale, much-larger count. Root cause, confirmed by
+       directly comparing an immediate re-query against a delayed one in the
+       browser: MapLibre's `setFilter` updates the layer's filter spec
+       synchronously (`getFilter()` reflects it right away) but
+       `queryRenderedFeatures` can still be querying against the
+       *previously compiled* filter until a render pass actually runs --
+       calling it in the same tick as `setFilter` (as the results-list
+       refresh did, triggered synchronously from the filter-toggle
+       handlers) can return results computed against the *old* filter.
+       `map.once("render", ...)` wasn't a strong enough signal (still
+       stale in testing); `map.once("idle", ...)` -- MapLibre's "no pending
+       render or tile work at all" event -- was. `scheduleResultsRefresh()`
+       in `main.ts` now defers every filter-triggered refresh through
+       `idle` instead of calling the query synchronously; the `moveend`-
+       triggered refresh (panning/zooming) was left as a direct call since
+       it never showed this staleness in testing (a pure camera move
+       doesn't recompile any layer filter, the specific thing that was
+       stale). Verified via repeated trials, not a one-off: 134
+       (unfiltered-equivalent, stale) before both fixes, 2 (correct, matches
+       the visibly rendered polygons) after -- consistent across reruns.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and

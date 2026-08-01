@@ -58,6 +58,14 @@ export function createFilterController(map: MapLibreMap, layers: FilterableLayer
       selectedBoroughs.size < ALL_BOROUGHS.length ||
       selectedClasses.size < ALL_TAX_CLASSES.length ||
       selectedDivergence.size < DIVERGENCE_BUCKETS.length,
+    // Narrower than isFiltered: true only when the divergence axis itself
+    // has been narrowed. tier2/nodata layers have no divergence
+    // classification at all (only fill-tier1/circle-tier1 carry one) -- the
+    // results-list panel uses this to drop those layers from its query
+    // entirely once a divergence slice is selected, rather than showing
+    // every uncolored building still sitting on screen alongside the
+    // (correctly narrowed) tier-1 matches.
+    isDivergenceNarrowed: () => selectedDivergence.size < DIVERGENCE_BUCKETS.length,
     toggleBorough(b: string) {
       if (selectedBoroughs.has(b)) selectedBoroughs.delete(b);
       else selectedBoroughs.add(b);
