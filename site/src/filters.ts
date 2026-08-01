@@ -20,7 +20,7 @@ export interface FilterableLayer {
  * default "everything on" state -- an `in` filter against a value list only
  * matches non-null fields, so it would otherwise hide those buildings even
  * though nothing was deselected. */
-export function createFilterController(map: MapLibreMap, layers: FilterableLayer[]) {
+export function createFilterController(map: MapLibreMap, layers: FilterableLayer[], onChange?: () => void) {
   const selectedBoroughs = new Set(ALL_BOROUGHS);
   const selectedClasses = new Set(ALL_TAX_CLASSES);
   const selectedDivergence = new Set(DIVERGENCE_BUCKETS);
@@ -42,12 +42,22 @@ export function createFilterController(map: MapLibreMap, layers: FilterableLayer
 
   function apply() {
     for (const layer of tracked) map.setFilter(layer.id, filterFor(layer));
+    onChange?.();
   }
 
   return {
     isBoroughSelected: (b: string) => selectedBoroughs.has(b),
     isClassSelected: (c: string) => selectedClasses.has(c),
     isDivergenceSelected: (idx: number) => selectedDivergence.has(idx),
+    // True once the user has narrowed any filter away from "everything
+    // selected" -- used to decide when the results-list panel is worth
+    // showing (see results.ts / main.ts): irrelevant clutter on the default
+    // unfiltered landing view, directly useful the moment something's
+    // actually been narrowed down.
+    isFiltered: () =>
+      selectedBoroughs.size < ALL_BOROUGHS.length ||
+      selectedClasses.size < ALL_TAX_CLASSES.length ||
+      selectedDivergence.size < DIVERGENCE_BUCKETS.length,
     toggleBorough(b: string) {
       if (selectedBoroughs.has(b)) selectedBoroughs.delete(b);
       else selectedBoroughs.add(b);

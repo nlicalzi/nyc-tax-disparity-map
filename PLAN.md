@@ -483,6 +483,40 @@
     Verified bidirectional (matches the existing story design): scrolling
     back up to the Griffin step re-shows the highlight and popup, not just
     scrolling forward past it.
+- **Follow-up (2026-07-31): results-list panel**, from direct feedback that
+  narrowing the divergence filter made matches hard to actually *find* on
+  the map (color-coded dots are easy to miss at a glance). New
+  `site/src/results.ts`: a "N buildings in view" panel (top-right, below the
+  zoom control) listing whatever's currently rendered and passing the
+  active filters, click an entry to fly to it and open its real popup.
+  - **Client-side only, no pipeline/tileset change.** Built from
+    `map.queryRenderedFeatures(CLICKABLE_LAYERS)` on every `moveend` and
+    filter change, not a separate precomputed citywide dataset -- considered
+    and rejected a pipeline-emitted "tier1 index" (address + coords + tax
+    class + divergence bucket, ~230K rows) since it would mean touching the
+    tileset build and re-verifying the performance budget for a feature
+    that's really about *what's currently on screen*, not a citywide browse.
+    Deduped by `bbl` (a building can span multiple query hits at tile
+    boundaries), capped at 200 entries with a "200+" indicator, addr-first
+    then BBL-only entries, both groups alphabetical.
+  - **Only shown once something's actually filtered**
+    (`filterController.isFiltered()`, a new getter alongside the existing
+    borough/class/divergence state) -- hidden on the default unfiltered
+    landing view where it would just be redundant clutter, appears the
+    moment any filter (borough, class, or divergence bucket) is narrowed.
+  - **Address availability is zoom-dependent, same constraint as
+    everywhere else**: `addr` only exists in tile properties at the
+    tileset's single highest detail zoom (Milestone 4's tile-schema size
+    fight), so at citywide/borough zoom most entries show a `BBL ######`
+    fallback instead of hiding those buildings from the list; verified both
+    paths against the citywide production build (85 real addresses at a
+    zoomed-in Manhattan view vs. `BBL` fallbacks at the citywide default).
+  - **Refactor along the way**: the flyTo-then-popup sequence (wait for
+    `moveend` + the buildings source to load, then query and show the real
+    popup) existed three times with drift risk (search selection, the
+    Griffin callout, now this) -- factored into two shared helpers
+    (`waitForBuildingPopup`, `flyToBuildingAndPopup`) in `main.ts`, all
+    three call sites now share one implementation.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and

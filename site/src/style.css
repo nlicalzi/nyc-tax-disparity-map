@@ -498,6 +498,71 @@ body.story-done .story-skip {
 
 /* --- Popup --- */
 
+/* --- Results list (live "buildings in view" panel) --- */
+
+#results {
+  position: absolute;
+  top: 90px;
+  right: 12px;
+  width: 260px;
+  max-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(11, 11, 11, 0.12);
+  overflow: hidden;
+}
+
+.results-count {
+  flex: none;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+
+.results-items {
+  overflow-y: auto;
+}
+
+.results-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 7px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.results-item:last-child {
+  border-bottom: none;
+}
+
+.results-item:hover,
+.results-item:focus {
+  background: rgba(85, 152, 231, 0.1);
+}
+
+.results-item-label {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.results-item-boro {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* --- Methodology panel --- */
 
 #methodology {

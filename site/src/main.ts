@@ -11,6 +11,7 @@ import {
   type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import type { Geometry } from "geojson";
 import { Protocol } from "pmtiles";
 import "./style.css";
 import {
@@ -26,6 +27,7 @@ import { createFilterController, renderFilterControls, type FilterableLayer } fr
 import { buildPopupHtml, type BuildingProps } from "./popup";
 import { setupSearch, type SearchRecord } from "./search";
 import { setupStory, GRIFFIN_CENTER, GRIFFIN_BBL } from "./story";
+import { buildResultsList, labelFor, type ResultEntry } from "./results";
 
 const TIER2_LAYER_IDS = ["fill-tier2", "fill-tier2-hatch", "circle-tier2"];
 
@@ -317,7 +319,12 @@ map.on("style.load", () => {
     { id: "circle-nodata", base: pointNoDataFilter },
     { id: "circle-tier1", base: pointTier1Filter, divergence: divergenceIndex },
   ];
-  const filterController = createFilterController(map, filterableLayers);
+  // Forward-declared: the results-list panel (built further down, after
+  // popup/whenBuildingsSourceLoaded exist) needs to refresh on every filter
+  // change, but filterController -- created here -- needs the callback at
+  // construction time. Reassigned to the real implementation below.
+  let refreshResults: () => void = () => {};
+  const filterController = createFilterController(map, filterableLayers, () => refreshResults());
   renderFilterControls(document.getElementById("filters")!, filterController);
 
   // Adds fill-tier2/fill-tier2-hatch/circle-tier2 the first time the legend
@@ -397,6 +404,7 @@ map.on("style.load", () => {
       for (const id of TIER2_LAYER_IDS) {
         if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
       }
+      refreshResults();
     },
     isDivergenceSelected: filterController.isDivergenceSelected,
     onToggleDivergence: filterController.toggleDivergence,
@@ -449,23 +457,86 @@ map.on("style.load", () => {
     map.on("sourcedata", handler);
   }
 
-  // Search (Site UX #3) -- lazy-loaded index (search.ts), fly to the
-  // selected building and open its popup once the tile covering it has
-  // loaded (queryRenderedFeatures only sees rendered/loaded tiles).
-  setupSearch(document.getElementById("search")!, (record: SearchRecord) => {
-    const target: LngLatLike = [record.lon, record.lat];
-    map.flyTo({ center: target, zoom: 17, essential: true });
+  // Shared by search selection, the results-list panel, and (partially) the
+  // Griffin callout below: wait for a just-triggered camera move to settle
+  // and the buildings source to actually be loaded, then look up the real
+  // tile feature at the target and show its popup -- built from actual tile
+  // properties, never a hand-typed stand-in, so it can't drift from what a
+  // genuine click on the same building shows.
+  function waitForBuildingPopup(target: LngLatLike, matchBbl: string, layers: string[]) {
     map.once("moveend", () => whenBuildingsSourceLoaded(() => {
       const point = map.project(target);
       const box: [[number, number], [number, number]] = [
         [point.x - 6, point.y - 6],
         [point.x + 6, point.y + 6],
       ];
-      const features = map.queryRenderedFeatures(box, { layers: CLICKABLE_LAYERS });
-      const match = features.find((f) => f.properties?.bbl === record.bbl) ?? features[0];
+      const features = map.queryRenderedFeatures(box, { layers });
+      const match = features.find((f) => f.properties?.bbl === matchBbl) ?? features[0];
       if (match) showPopup(target, match.properties as BuildingProps);
     }));
+  }
+
+  function flyToBuildingAndPopup(target: LngLatLike, matchBbl: string, layers: string[] = CLICKABLE_LAYERS) {
+    map.flyTo({ center: target, zoom: 17, essential: true });
+    waitForBuildingPopup(target, matchBbl, layers);
+  }
+
+  // Search (Site UX #3) -- lazy-loaded index (search.ts), fly to the
+  // selected building and open its popup once the tile covering it has
+  // loaded (queryRenderedFeatures only sees rendered/loaded tiles).
+  setupSearch(document.getElementById("search")!, (record: SearchRecord) => {
+    flyToBuildingAndPopup([record.lon, record.lat], record.bbl);
   });
+
+  // Results-list panel (added after user feedback: a narrowed
+  // divergence-axis filter showed color-coded matches but made them hard to
+  // actually *find* on the map). Client-side only -- built from whatever's
+  // currently rendered and passing the active filters, so it can never
+  // disagree with what's on screen. See results.ts.
+  const MAX_RESULTS = 200;
+  const resultsRoot = document.getElementById("results")!;
+  const resultsController = buildResultsList(resultsRoot, {
+    onSelect: (entry: ResultEntry) => flyToBuildingAndPopup([entry.lon, entry.lat], entry.bbl),
+  });
+
+  /** Centroid-ish point (average of the exterior ring's vertices -- not a
+   * true area centroid, but plenty accurate for "fly the camera here"). */
+  function featureCenter(geom: Geometry): [number, number] {
+    if (geom.type === "Point") return geom.coordinates as [number, number];
+    const ring = geom.type === "Polygon" ? geom.coordinates[0] : geom.type === "MultiPolygon" ? geom.coordinates[0]?.[0] : undefined;
+    if (!ring?.length) return [0, 0];
+    let sx = 0;
+    let sy = 0;
+    for (const [x, y] of ring) {
+      sx += x;
+      sy += y;
+    }
+    return [sx / ring.length, sy / ring.length];
+  }
+
+  refreshResults = function refreshResultsImpl() {
+    const filtered = filterController.isFiltered();
+    resultsRoot.hidden = !filtered;
+    if (!filtered) return;
+
+    const features = map.queryRenderedFeatures({ layers: CLICKABLE_LAYERS });
+    const byBbl = new Map<string, ResultEntry>();
+    for (const f of features) {
+      const props = f.properties as BuildingProps;
+      if (!props?.bbl || byBbl.has(props.bbl) || !f.geometry) continue;
+      const [lon, lat] = featureCenter(f.geometry);
+      byBbl.set(props.bbl, { bbl: props.bbl, label: labelFor(props.bbl, props.addr), boro: props.boro, lon, lat });
+    }
+
+    const hasAddr = (e: ResultEntry) => !e.label.startsWith("BBL ");
+    const entries = [...byBbl.values()].sort((a, b) => {
+      const byHasAddr = Number(hasAddr(b)) - Number(hasAddr(a));
+      return byHasAddr !== 0 ? byHasAddr : a.label.localeCompare(b.label);
+    });
+
+    resultsController.update(entries.slice(0, MAX_RESULTS), entries.length > MAX_RESULTS);
+  };
+  map.on("moveend", refreshResults);
 
   // Griffin step callout (Site UX #5 / story.ts's onGriffinFocus): shows the
   // highlight outline and opens the *real* popup for 220 Central Park South
@@ -483,16 +554,7 @@ map.on("style.load", () => {
       popup.remove();
       return;
     }
-    map.once("moveend", () => whenBuildingsSourceLoaded(() => {
-      const point = map.project(GRIFFIN_CENTER);
-      const box: [[number, number], [number, number]] = [
-        [point.x - 8, point.y - 8],
-        [point.x + 8, point.y + 8],
-      ];
-      const features = map.queryRenderedFeatures(box, { layers: ["fill-tier1"] });
-      const match = features.find((f) => f.properties?.bbl === GRIFFIN_BBL);
-      if (match) showPopup(GRIFFIN_CENTER, match.properties as BuildingProps);
-    }));
+    waitForBuildingPopup(GRIFFIN_CENTER, GRIFFIN_BBL, ["fill-tier1"]);
   }
 
   // Scrollytelling intro (Site UX #5) -- pins this same map instance behind
