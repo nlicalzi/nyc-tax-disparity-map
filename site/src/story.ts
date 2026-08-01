@@ -4,12 +4,19 @@ export interface StoryOptions {
   map: MapLibreMap;
   cityBounds: [[number, number], [number, number]];
   chartContainer: HTMLElement;
+  // Called with true on entering the Griffin step, false on leaving it --
+  // main.ts uses this to show/hide a highlight outline around 220 Central
+  // Park South and open its real (tile-driven) popup, "as though clicked".
+  onGriffinFocus: (focused: boolean) => void;
 }
 
 // 220 Central Park South's real centroid (data/cache/buildings_geom.parquet,
 // pluto_bbl 1010307501) -- not eyeballed, queried directly against the same
-// geometry the tileset itself is built from.
-const GRIFFIN_CENTER: LngLatLike = [-73.980567, 40.766969];
+// geometry the tileset itself is built from. Exported so main.ts's Griffin
+// highlight/popup logic shares this one validated coordinate and BBL rather
+// than re-deriving or re-typing them.
+export const GRIFFIN_CENTER: LngLatLike = [-73.980567, 40.766969];
+export const GRIFFIN_BBL = "1010307501";
 const GRIFFIN_ZOOM = 17.5;
 
 const MAP_INTERACTION_HANDLERS = [
@@ -39,7 +46,7 @@ function setMapInteractive(map: MapLibreMap, enabled: boolean): void {
  * map) and, for the "it's not just one building" step, swaps in the lazy-
  * loaded Observable Plot scatter (scatter.ts) as the pinned visual instead. */
 export function setupStory(root: HTMLElement, opts: StoryOptions): void {
-  const { map, cityBounds, chartContainer } = opts;
+  const { map, cityBounds, chartContainer, onGriffinFocus } = opts;
   const steps = Array.from(root.querySelectorAll<HTMLElement>(".story-step"));
 
   let activeStep = -1;
@@ -64,6 +71,7 @@ export function setupStory(root: HTMLElement, opts: StoryOptions): void {
   function applyStep(i: number) {
     if (i === activeStep) return;
     activeStep = i;
+    onGriffinFocus(i === 1);
     if (i === 2) {
       showChart(true);
       return;

@@ -13,13 +13,19 @@ import {
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Protocol } from "pmtiles";
 import "./style.css";
-import { makeHatchPattern, rateColorExpression, divergenceColorExpression, NO_DATA_COLOR } from "./colors";
+import {
+  makeHatchPattern,
+  rateColorExpression,
+  divergenceColorExpression,
+  divergenceIndexExpression,
+  NO_DATA_COLOR,
+} from "./colors";
 import { buildLegend } from "./legend";
 import { buildMethodology } from "./methodology";
 import { createFilterController, renderFilterControls, type FilterableLayer } from "./filters";
 import { buildPopupHtml, type BuildingProps } from "./popup";
 import { setupSearch, type SearchRecord } from "./search";
-import { setupStory } from "./story";
+import { setupStory, GRIFFIN_CENTER, GRIFFIN_BBL } from "./story";
 
 const TIER2_LAYER_IDS = ["fill-tier2", "fill-tier2-hatch", "circle-tier2"];
 
@@ -263,15 +269,53 @@ map.on("style.load", () => {
     },
   });
 
+  // Griffin's building highlight -- hidden except during the story's Griffin
+  // step (story.ts's onGriffinFocus). A soft glow under a crisp outline,
+  // matching the halo+ring treatment the scatter chart uses for the same
+  // building (scatter.ts) so the two callouts read as one visual language.
+  const griffinFilter: FilterSpecification = ["==", ["get", "bbl"], GRIFFIN_BBL];
+  map.addLayer({
+    id: "highlight-griffin-glow",
+    type: "line",
+    source: SOURCE_ID,
+    "source-layer": SOURCE_LAYER,
+    filter: griffinFilter,
+    layout: { visibility: "none" },
+    paint: {
+      "line-color": "#e0362f",
+      "line-width": 10,
+      "line-opacity": 0.35,
+      "line-blur": 2,
+    },
+  });
+  map.addLayer({
+    id: "highlight-griffin",
+    type: "line",
+    source: SOURCE_ID,
+    "source-layer": SOURCE_LAYER,
+    filter: griffinFilter,
+    layout: { visibility: "none" },
+    paint: {
+      "line-color": "#e0362f",
+      "line-width": 3,
+      "line-opacity": 1,
+    },
+  });
+
   // Borough / tax-class filters (Site UX #4) -- combine with each layer's
   // own tier/geometry-type base filter, per filters.ts. fill-tier2/
   // fill-tier2-hatch/circle-tier2 are registered lazily, in ensureTier2Layers.
+  // fill-tier1/circle-tier1 also carry a `divergence` expression -- the same
+  // -2..+2 index they're colored by (colors.ts) -- so the legend's
+  // divergence-bucket filter can slice on exactly what's on screen. tier2/
+  // nodata layers aren't colored by this axis and don't get one.
+  const divergenceIndex = divergenceIndexExpression(["get", "mkt"], ["get", "r1"]);
   const filterableLayers: FilterableLayer[] = [
     { id: "fill-nodata", base: noDataFilter },
     { id: "line-tier2-outline", base: tier2Filter },
-    { id: "fill-tier1", base: tier1Filter },
+    { id: "fill-tier1", base: tier1Filter, divergence: divergenceIndex },
     { id: "circle-nodata", base: pointNoDataFilter },
-    { id: "circle-tier1", base: pointTier1Filter },
+    { id: "circle-tier1", base: pointTier1Filter, divergence: divergenceIndex },
   ];
   const filterController = createFilterController(map, filterableLayers);
   renderFilterControls(document.getElementById("filters")!, filterController);
@@ -354,6 +398,8 @@ map.on("style.load", () => {
         if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
       }
     },
+    isDivergenceSelected: filterController.isDivergenceSelected,
+    onToggleDivergence: filterController.toggleDivergence,
   });
 
   buildMethodology(document.getElementById("methodology")!);
@@ -421,6 +467,34 @@ map.on("style.load", () => {
     }));
   });
 
+  // Griffin step callout (Site UX #5 / story.ts's onGriffinFocus): shows the
+  // highlight outline and opens the *real* popup for 220 Central Park South
+  // -- built from the same tile properties a genuine click would use, not a
+  // hand-typed stand-in -- so it can never drift out of sync with what
+  // clicking the building anywhere else on the map shows. Waits on `moveend`
+  // (the story's own flyTo to Griffin's building) + the buildings source
+  // actually being loaded, same pattern as the search-selection popup above.
+  function showGriffinCallout(show: boolean) {
+    const visibility = show ? "visible" : "none";
+    for (const id of ["highlight-griffin-glow", "highlight-griffin"]) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+    }
+    if (!show) {
+      popup.remove();
+      return;
+    }
+    map.once("moveend", () => whenBuildingsSourceLoaded(() => {
+      const point = map.project(GRIFFIN_CENTER);
+      const box: [[number, number], [number, number]] = [
+        [point.x - 8, point.y - 8],
+        [point.x + 8, point.y + 8],
+      ];
+      const features = map.queryRenderedFeatures(box, { layers: ["fill-tier1"] });
+      const match = features.find((f) => f.properties?.bbl === GRIFFIN_BBL);
+      if (match) showPopup(GRIFFIN_CENTER, match.properties as BuildingProps);
+    }));
+  }
+
   // Scrollytelling intro (Site UX #5) -- pins this same map instance behind
   // the story steps, flying its camera to Ken Griffin's penthouse and back
   // before handing off into the free-roam experience above. See story.ts.
@@ -428,5 +502,6 @@ map.on("style.load", () => {
     map,
     cityBounds: NYC_BOUNDS,
     chartContainer: document.getElementById("chart-pin")!,
+    onGriffinFocus: showGriffinCallout,
   });
 });

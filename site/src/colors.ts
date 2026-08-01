@@ -63,11 +63,21 @@ export const DIVERGENCE_STEPS: Array<[number, string]> = [
   [2, "#104281"],
 ];
 
-/** MapLibre expression: bucket mkt/r1 into terciles, then color by (valueTier - rateTier). */
-export function divergenceColorExpression(mktField: unknown[], rateField: unknown[]): unknown[] {
+export const DIVERGENCE_BUCKETS = DIVERGENCE_STEPS.map(([step]) => step);
+
+/** MapLibre expression: bucket mkt/r1 into terciles, then (valueTier - rateTier)
+ * -- the same -2..+2 diverging index divergenceColorExpression colors by.
+ * Factored out so the divergence-axis filter (filters.ts) can filter on the
+ * exact same index a layer is colored by, not a re-derived approximation. */
+export function divergenceIndexExpression(mktField: unknown[], rateField: unknown[]): unknown[] {
   const valueTier = ["step", mktField, 0, VALUE_BREAKS[0], 1, VALUE_BREAKS[1], 2];
   const rateTier = ["step", rateField, 0, RATE_TIER_BREAKS[0], 1, RATE_TIER_BREAKS[1], 2];
-  const index = ["-", valueTier, rateTier];
+  return ["-", valueTier, rateTier];
+}
+
+/** MapLibre expression: bucket mkt/r1 into terciles, then color by (valueTier - rateTier). */
+export function divergenceColorExpression(mktField: unknown[], rateField: unknown[]): unknown[] {
+  const index = divergenceIndexExpression(mktField, rateField);
   const stops = DIVERGENCE_STEPS.flatMap(([step, color]) => [step, color]);
   return ["step", index, stops[1], ...stops.slice(2)];
 }

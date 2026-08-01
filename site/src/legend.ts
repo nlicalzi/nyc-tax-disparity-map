@@ -3,9 +3,24 @@ import { DIVERGENCE_STEPS, HATCH_LINE_COLOR, NO_DATA_COLOR } from "./colors";
 export interface LegendOptions {
   tier2Visible: boolean;
   onToggleTier2: (visible: boolean) => void;
+  isDivergenceSelected: (step: number) => boolean;
+  onToggleDivergence: (step: number) => void;
 }
 
-/** Renders the tier1 divergence legend (single diverging bar), the tier2 toggle, and the basis key. */
+// Short labels for the divergence-bucket filter chips, one per DIVERGENCE_STEPS
+// entry -- wording matches the ramp's own "overtaxed vs. value" / "proportionate"
+// / "underpriced vs. value" labels below it so the filter and the legend read
+// as one thing, not two separate vocabularies.
+const DIVERGENCE_LABELS: Record<number, string> = {
+  [-2]: "Most overtaxed vs. value",
+  [-1]: "Overtaxed vs. value",
+  0: "Proportionate",
+  1: "Underpriced vs. value",
+  2: "Most underpriced vs. value",
+};
+
+/** Renders the tier1 divergence legend (single diverging bar), a filter
+ * toggle per bucket on that same axis, the tier2 toggle, and the basis key. */
 export function buildLegend(root: HTMLElement, options: LegendOptions): void {
   const gradientCss = DIVERGENCE_STEPS.map(
     ([step, color]) => `${color} ${((step + 2) / 4) * 100}%`,
@@ -21,6 +36,20 @@ export function buildLegend(root: HTMLElement, options: LegendOptions): void {
         <span>proportionate</span>
         <span>underpriced<br/>vs. value</span>
       </div>
+      <div class="legend-divergence-filter" role="group" aria-label="Filter by tax fairness">
+        ${DIVERGENCE_STEPS.map(
+          ([step, color]) => `
+          <button
+            type="button"
+            class="divergence-chip${options.isDivergenceSelected(step) ? " divergence-chip-active" : ""}"
+            data-step="${step}"
+            style="--chip-color:${color}"
+            data-tip="${DIVERGENCE_LABELS[step]}"
+            aria-label="${DIVERGENCE_LABELS[step]}"
+          ></button>`,
+        ).join("")}
+      </div>
+      <p class="legend-note legend-note-tight">Click a swatch to show only that slice (sale-verified buildings only).</p>
     </div>
     <div class="legend-section">
       <h2>Coverage</h2>
@@ -77,4 +106,11 @@ export function buildLegend(root: HTMLElement, options: LegendOptions): void {
   const toggle = root.querySelector<HTMLInputElement>("#tier2-toggle")!;
   toggle.checked = options.tier2Visible;
   toggle.addEventListener("change", () => options.onToggleTier2(toggle.checked));
+
+  root.querySelectorAll<HTMLButtonElement>(".divergence-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      chip.classList.toggle("divergence-chip-active");
+      options.onToggleDivergence(Number(chip.dataset.step));
+    });
+  });
 }

@@ -49,6 +49,62 @@ const CLASS_COLORS: Record<string, string> = {
 // edge rather than silently dropping them.
 const Y_DOMAIN_MAX_PCT = 8;
 
+// Ordinary-least-squares fit of y on x. Used below to fit effective rate
+// against log10(sale price), not raw sale price -- the x-axis is a log
+// scale because price spans orders of magnitude, so a fit computed against
+// the *raw* price would be dominated by the handful of highest-price points
+// and wouldn't render as a straight line on a log-x chart anyway. Fitting
+// against log10(price) instead means each unit of slope is directly
+// interpretable as "rate change per 10x change in price", and (since the
+// x-scale itself is log) the fitted line renders as a straight segment when
+// plotted back in raw-price/log-scale coordinates.
+function linearRegression(points: Array<[number, number]>): { slope: number; intercept: number } {
+  const n = points.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (const [x, y] of points) {
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  }
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+  const intercept = (sumY - slope * sumX) / n;
+  return { slope, intercept };
+}
+
+interface FitPoint {
+  saleK: number;
+  y: number;
+  cls: "1" | "2";
+}
+
+/** Per-class least-squares fit line (two endpoint points, spanning that
+ * class's own observed price range) plus the slope in the interpretable
+ * "percentage points of rate per 10x price" unit -- see linearRegression's
+ * comment for why log10(price) is the fitted variable. */
+function fitByClass(data: ScatterRow[]): { lines: FitPoint[]; slopes: Record<"1" | "2", number> } {
+  const lines: FitPoint[] = [];
+  const slopes = {} as Record<"1" | "2", number>;
+  for (const cls of ["1", "2"] as const) {
+    const rows = data.filter((d) => d.cls === cls);
+    if (rows.length < 2) continue;
+    const points: Array<[number, number]> = rows.map((d) => [Math.log10(d.saleK), d.rateBp / 100]);
+    const { slope, intercept } = linearRegression(points);
+    slopes[cls] = slope;
+    const xs = points.map(([x]) => x);
+    const xMin = Math.min(...xs);
+    const xMax = Math.max(...xs);
+    lines.push(
+      { saleK: 10 ** xMin, y: intercept + slope * xMin, cls },
+      { saleK: 10 ** xMax, y: intercept + slope * xMax, cls },
+    );
+  }
+  return { lines, slopes };
+}
+
 let dataPromise: Promise<ScatterRow[]> | null = null;
 
 /** Dynamic import target for @observablehq/plot lives in main.ts/story.ts --
@@ -72,7 +128,12 @@ export function loadScatterData(): Promise<ScatterRow[]> {
 export function renderScatterChart(container: HTMLElement, data: ScatterRow[]): void {
   const griffin = data.find((d) => d.key === GRIFFIN_KEY);
   const width = container.clientWidth || 640;
-  const height = container.clientHeight || 460;
+  // Leaves room below the plot for the caption appended after it -- height
+  // is measured once, before that caption exists, so without this the plot
+  // would claim the container's full height and push the caption off-screen.
+  const CAPTION_HEIGHT = 34;
+  const height = (container.clientHeight || 460) - CAPTION_HEIGHT;
+  const { lines: fitLines, slopes } = fitByClass(data);
 
   const plot = Plot.plot({
     width,
@@ -121,6 +182,19 @@ export function renderScatterChart(container: HTMLElement, data: ScatterRow[]): 
         },
         title: (d: ScatterRow) => `${formatMoney(d.saleK * 1000)} sale · ${formatRate(d.rateBp)} effective rate`,
       }),
+      // Per-class least-squares fit (see fitByClass) -- the visual answer to
+      // "it's not just one building": co-op/condo's line trends down as
+      // price rises, 1-3 family's stays close to flat. Dashed and drawn
+      // above the dots (opaque, unlike the dots' 0.35 fillOpacity) so the
+      // trend reads clearly through the scatter without a separate legend
+      // entry -- it reuses the same `cls` color channel as the dots.
+      Plot.line(fitLines, {
+        x: "saleK",
+        y: "y",
+        stroke: "cls",
+        strokeWidth: 2.5,
+        strokeDasharray: "5,4",
+      }),
       // Griffin's own point, called out per marks-and-anatomy's "label the
       // one series the story is about" -- a surface-color halo first so the
       // highlight ring stays legible against overlapping data dots, then
@@ -162,5 +236,25 @@ export function renderScatterChart(container: HTMLElement, data: ScatterRow[]): 
     ],
   });
 
-  container.replaceChildren(plot);
+  const caption = document.createElement("p");
+  caption.className = "scatter-caption";
+  caption.innerHTML = describeSlopes(slopes);
+
+  container.replaceChildren(plot, caption);
+}
+
+/** Plain-language summary of the fitted slopes, computed from the same real
+ * sample the chart plots -- not a hardcoded claim, so it can't drift out of
+ * sync with the data. `slope` is pp of effective rate per 10x change in
+ * price (see linearRegression's comment). */
+function describeSlopes(slopes: Record<"1" | "2", number>): string {
+  const fmt = (s: number) => `${s >= 0 ? "+" : ""}${s.toFixed(2)} pp`;
+  const parts: string[] = [];
+  if (slopes["2"] != null) {
+    parts.push(`co-op/condo/rental: ${fmt(slopes["2"])} per 10&times; price`);
+  }
+  if (slopes["1"] != null) {
+    parts.push(`1&ndash;3 family: ${fmt(slopes["1"])} per 10&times; price`);
+  }
+  return `Line of best fit, this sample &mdash; ${parts.join(" &middot; ")}.`;
 }

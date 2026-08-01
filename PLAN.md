@@ -433,6 +433,56 @@
   to the next (their stated preference) -- held for all 7 milestones,
   including a genuine mid-milestone check-in in Milestone 7 when scope
   expanded beyond the original plan (fixing the search-popup bug).
+- **Post-Milestone-7 feature additions (2026-07-31), from direct user
+  feedback on the deployed site.** Four asks, not a formal milestone: local
+  work only, verified via Playwright against both the dev sample and the
+  full citywide production build, not yet pushed -- pending user review of
+  the result before it goes live (deploys automatically on push to `main`,
+  per Milestone 7's Actions workflow).
+  - **Tax-class filter clarity**: the header's tax-class chips already had a
+    native `title` tooltip, but per feedback it still wasn't obvious what
+    "Class 2" means. Replaced with a custom `data-tip` + CSS tooltip
+    (`filters.ts`/`style.css`) that appears instantly on hover/focus, no
+    native-title delay; `aria-label` carries the same text for screen
+    readers, which don't reliably read `title`.
+  - **Divergence-axis filter**: a new filterable dimension on the same -2..+2
+    over/under-taxed index `colors.ts` already colors tier-1 buildings by
+    (factored the shared bucket math out into
+    `divergenceIndexExpression`, reused by both the paint expression and the
+    new filter). Five toggle chips in the legend, directly under the
+    diverging ramp they filter (`legend.ts`), wired through a third
+    dimension on `filters.ts`'s `createFilterController` alongside the
+    existing borough/class filters -- same "omit the clause when everything
+    selected" pattern. Applies only to `fill-tier1`/`circle-tier1` (tagged
+    with a `divergence` expression per layer); tier2/nodata layers aren't
+    colored by this axis and don't carry one.
+  - **Scatter chart trend lines**: per-tax-class least-squares fit of
+    effective rate against log10(sale price) (not raw price -- a fit against
+    raw price would be dominated by the highest few points and wouldn't
+    render straight on the chart's log-x scale), drawn as a dashed line per
+    class reusing the existing color channel, plus a caption stating the
+    fitted slope in "percentage points per 10x price" -- computed live from
+    the actual rendered sample, not a hardcoded claim. **This surfaced a
+    real, significant finding** -- see the new correction note in "The
+    story" above -- that changed both the chart's caption and the
+    surrounding story-card copy, checked with the user before shipping given
+    it touches the site's headline claim, not just this feature.
+  - **Griffin highlight + real popup on the story's Griffin step**: a red
+    outline (soft glow + crisp line, matching the scatter chart's halo+ring
+    treatment for the same building) around 220 Central Park South's
+    polygon, shown only during that story step. Opens the *real* popup --
+    queried from the loaded tile via `queryRenderedFeatures`, built with the
+    same `buildPopupHtml` a genuine click uses -- rather than a hand-typed
+    stand-in, so it can't drift out of sync with what clicking the building
+    anywhere else shows. Threaded via a new `onGriffinFocus` callback on
+    `StoryOptions` (`story.ts`), called from `applyStep`; waits on `moveend`
+    + the buildings source being loaded before querying, the same pattern
+    used for the Milestone 7 search-popup fix. `GRIFFIN_CENTER`/`GRIFFIN_BBL`
+    now live as exports from `story.ts` (previously private) so `main.ts`
+    shares the one validated coordinate/BBL instead of re-deriving it.
+    Verified bidirectional (matches the existing story design): scrolling
+    back up to the Griffin step re-shows the highlight and popup, not just
+    scrolling forward past it.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and
@@ -442,6 +492,30 @@ often valued by DOF at a small fraction of what they actually sold for — while
 modest single-family homes and co-ops are assessed much closer to market
 value. Result: effective tax rates *fall* as property value rises at the very
 top.
+
+**Correction (2026-07-31, post-Milestone-7 feature work):** "modest
+single-family homes... are assessed much closer to market value" overstates
+how flat class 1 actually is across its own price range. A least-squares fit
+of sale-verified effective rate against log10(sale price), run against the
+full citywide sample while adding the scatter chart's trend lines (see
+Status below), shows class 1's rate *also* falls as price rises -- and at
+every price band tested, at least as steeply as class 2's. Not an artifact:
+holds after excluding the two most extreme outliers, and gets *more*
+pronounced (not less) when the top 1% by price is trimmed from both classes.
+The likely mechanism is different from class 2's (income-approach
+undervaluation): New York State's statutory cap on how fast a class 1
+property's assessed value can rise year-over-year (6%/year, 20%/5-year)
+means a home whose market value has appreciated quickly -- which correlates
+with a high current sale price -- can have an assessed value lagging far
+behind it at time of sale. This is a plausible, well-known feature of NYC
+property tax policy, not something independently traced through this
+pipeline's own assessment-history data the way the Griffin correction above
+was -- flagged as a likely explanation, not a fully validated one. The
+site's "It's not just one building" step and its scatter chart's trend
+lines/caption were updated to state the finding directly rather than the
+original "blue stays proportionate" framing; this doesn't change the
+Griffin anchor or the class-2 income-approach story, which remain the
+validated headline.
 
 Concrete anchors to cite in the UI:
 - Ken Griffin's Central Park South penthouse (BBL 1-01030-1082, "220 CENTRAL
