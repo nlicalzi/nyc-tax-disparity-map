@@ -5,12 +5,16 @@ lower *effective* tax rates for ultra-luxury condos/co-ops than for modest
 homes — because co-ops and condos are assessed via the "comparable rental
 income" method rather than sale price.
 
-See [PLAN.md](./PLAN.md) for the full design doc.
+**Live site**: https://nlicalzi.github.io/nyc-tax-disparity-map/
+
+See [PLAN.md](./PLAN.md) for the full design doc and [PERFORMANCE.md](./PERFORMANCE.md)
+for the performance-gate results and roadmap.
 
 ## Status
 
-Milestones 1 (data pipeline), 2 (tile build), 3 (static map MVP), and 4
-(popups/search/filters) are done. See milestones in PLAN.md.
+All 7 milestones are done: data pipeline, tile build, static map MVP,
+interactivity (popups/search/filters), narrative/scrollytelling layer,
+performance gate, and deploy to GitHub Pages. See milestones in PLAN.md.
 
 ## Running the site
 
@@ -20,6 +24,15 @@ npm install
 npm run dev      # http://localhost:5173, uses the Manhattan dev-sample tileset
 npm run build && npm run preview   # full citywide tileset, as deployed
 ```
+
+## Deployment
+
+Pushes to `main` build and deploy automatically via
+`.github/workflows/deploy.yml` (GitHub Actions → GitHub Pages): `npm ci &&
+npm run build` in `site/`, then publish `site/dist/`. No manual build step
+or committed `dist/` needed. `site/vite.config.ts`'s `base` is set to the
+repo's project-page path (`/nyc-tax-disparity-map/`) — update it if the repo
+is ever renamed or moved to a custom domain.
 
 ## Data vintage
 

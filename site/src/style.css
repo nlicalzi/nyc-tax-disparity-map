@@ -421,6 +421,73 @@ body.story-done .story-skip {
 
 /* --- Popup --- */
 
+/* --- Methodology panel --- */
+
+#methodology {
+  position: absolute;
+  bottom: 24px;
+  right: 12px;
+  max-width: 300px;
+}
+
+.methodology-panel {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 1px 4px rgba(11, 11, 11, 0.12);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.methodology-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-primary);
+  list-style: none;
+}
+
+.methodology-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.methodology-panel summary::before {
+  content: "\25b8";
+  display: inline-block;
+  margin-right: 5px;
+  transition: transform 0.15s ease;
+}
+
+.methodology-panel[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.methodology-body {
+  margin-top: 8px;
+  line-height: 1.45;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.methodology-body p {
+  margin: 0 0 8px;
+}
+
+.methodology-body p:last-child {
+  margin-bottom: 0;
+}
+
+.methodology-body code {
+  font-size: 10px;
+  background: rgba(11, 11, 11, 0.06);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.methodology-body a {
+  color: #1c5cab;
+}
+
 .maplibregl-popup-content {
   padding: 12px 14px;
   border-radius: 8px;

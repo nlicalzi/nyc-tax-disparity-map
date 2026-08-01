@@ -7,6 +7,7 @@ import {
   type DataDrivenPropertyValueSpecification,
   type FilterSpecification,
   type LngLatLike,
+  type MapSourceDataEvent,
   type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -14,6 +15,7 @@ import { Protocol } from "pmtiles";
 import "./style.css";
 import { makeHatchPattern, rateColorExpression, divergenceColorExpression, NO_DATA_COLOR } from "./colors";
 import { buildLegend } from "./legend";
+import { buildMethodology } from "./methodology";
 import { createFilterController, renderFilterControls, type FilterableLayer } from "./filters";
 import { buildPopupHtml, type BuildingProps } from "./popup";
 import { setupSearch, type SearchRecord } from "./search";
@@ -354,6 +356,8 @@ map.on("style.load", () => {
     },
   });
 
+  buildMethodology(document.getElementById("methodology")!);
+
   // Popups (Site UX #2) -- single reused Popup instance, opened either by a
   // direct map click or by selecting a search result.
   const popup = new Popup({ closeButton: true, maxWidth: "300px" });
@@ -377,13 +381,35 @@ map.on("style.load", () => {
     });
   }
 
+  // Waits for the buildings source specifically, not the map-wide `idle`
+  // event -- `idle` only fires once *every* source (including the live,
+  // continuously-tile-fetching OpenFreeMap basemap) has nothing pending, so
+  // searching soon after landing on the free-roam map (while the basemap is
+  // still loading tiles from the initial pan/zoom) could leave a search
+  // selection's flyTo waiting on `idle` indefinitely -- found via testing
+  // during Milestone 7, reproduces on the pre-M7 build too. Mirrors the
+  // isSourceLoaded check the first-tiles-painted perf mark above already
+  // uses, just reusable and post-initial-load.
+  function whenBuildingsSourceLoaded(cb: () => void) {
+    if (map.isSourceLoaded(SOURCE_ID)) {
+      cb();
+      return;
+    }
+    const handler = (e: MapSourceDataEvent) => {
+      if (e.sourceId !== SOURCE_ID || !e.isSourceLoaded) return;
+      map.off("sourcedata", handler);
+      cb();
+    };
+    map.on("sourcedata", handler);
+  }
+
   // Search (Site UX #3) -- lazy-loaded index (search.ts), fly to the
   // selected building and open its popup once the tile covering it has
   // loaded (queryRenderedFeatures only sees rendered/loaded tiles).
   setupSearch(document.getElementById("search")!, (record: SearchRecord) => {
     const target: LngLatLike = [record.lon, record.lat];
     map.flyTo({ center: target, zoom: 17, essential: true });
-    map.once("idle", () => {
+    map.once("moveend", () => whenBuildingsSourceLoaded(() => {
       const point = map.project(target);
       const box: [[number, number], [number, number]] = [
         [point.x - 6, point.y - 6],
@@ -392,7 +418,7 @@ map.on("style.load", () => {
       const features = map.queryRenderedFeatures(box, { layers: CLICKABLE_LAYERS });
       const match = features.find((f) => f.properties?.bbl === record.bbl) ?? features[0];
       if (match) showPopup(target, match.properties as BuildingProps);
-    });
+    }));
   });
 
   // Scrollytelling intro (Site UX #5) -- pins this same map instance behind
