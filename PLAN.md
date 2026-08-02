@@ -555,6 +555,22 @@
        stale). Verified via repeated trials, not a one-off: 134
        (unfiltered-equivalent, stale) before both fixes, 2 (correct, matches
        the visibly rendered polygons) after -- consistent across reruns.
+  - **Follow-up (2026-08-02): effective rate added to each row.** User
+    feedback: the BBL-only fallback (when zoomed out past the tileset's
+    single detail zoom, see above) wasn't a very useful label on its own --
+    asked for something like "Address | Effective Tax Rate" instead.
+    `addr` is a detail-zoom-only field, but `r1`/`r2` are lean-schema fields
+    present at *every* zoom (colors.ts), so the rate can always be shown
+    regardless of how zoomed out the list was built at, unlike the address.
+    New `rateLabelFor()` in `results.ts`: plain `formatRate(r1)` for
+    tier-1 (sale-verified), `formatRate(r2) + " (est.)"` for tier-2 (DOF-
+    value fallback), `"no data"` for nodata rows -- the `(est.)` suffix
+    matters so a tier-2 estimate is never shown unlabeled next to a tier-1
+    sale-verified number, matching the same distinction the map/legend/
+    popup all make elsewhere (PLAN.md's Core metric: the two aren't
+    directly comparable, and blending them was explicitly rejected back in
+    Milestone 3). Rendered right-aligned on each row's second line, next to
+    the borough.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and

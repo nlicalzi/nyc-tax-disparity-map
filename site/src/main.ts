@@ -27,7 +27,7 @@ import { createFilterController, renderFilterControls, type FilterableLayer } fr
 import { buildPopupHtml, type BuildingProps } from "./popup";
 import { setupSearch, type SearchRecord } from "./search";
 import { setupStory, GRIFFIN_CENTER, GRIFFIN_BBL } from "./story";
-import { buildResultsList, labelFor, type ResultEntry } from "./results";
+import { buildResultsList, labelFor, rateLabelFor, type ResultEntry } from "./results";
 
 const TIER2_LAYER_IDS = ["fill-tier2", "fill-tier2-hatch", "circle-tier2"];
 
@@ -550,7 +550,14 @@ map.on("style.load", () => {
       const props = f.properties as BuildingProps;
       if (!props?.bbl || byBbl.has(props.bbl) || !f.geometry) continue;
       const [lon, lat] = featureCenter(f.geometry);
-      byBbl.set(props.bbl, { bbl: props.bbl, label: labelFor(props.bbl, props.addr), boro: props.boro, lon, lat });
+      byBbl.set(props.bbl, {
+        bbl: props.bbl,
+        label: labelFor(props.bbl, props.addr),
+        boro: props.boro,
+        lon,
+        lat,
+        rateLabel: rateLabelFor(props.t1, props.r1, props.r2),
+      });
     }
 
     const hasAddr = (e: ResultEntry) => !e.label.startsWith("BBL ");

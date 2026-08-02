@@ -1,4 +1,4 @@
-import { BOROUGH_NAMES, escapeHtml, titleCaseAddress } from "./format";
+import { BOROUGH_NAMES, escapeHtml, formatRate, titleCaseAddress } from "./format";
 
 export interface ResultEntry {
   bbl: string;
@@ -6,6 +6,7 @@ export interface ResultEntry {
   boro: string;
   lon: number;
   lat: number;
+  rateLabel: string; // e.g. "1.42%", "2.10% (est.)", or "no data" -- see rateLabelFor
 }
 
 export interface ResultsListOptions {
@@ -36,7 +37,10 @@ export function buildResultsList(root: HTMLElement, options: ResultsListOptions)
         (e) => `
         <button type="button" class="results-item" data-bbl="${escapeHtml(e.bbl)}">
           <span class="results-item-label">${escapeHtml(e.label)}</span>
-          <span class="results-item-boro">${escapeHtml(BOROUGH_NAMES[e.boro] ?? e.boro)}</span>
+          <span class="results-item-meta">
+            <span class="results-item-boro">${escapeHtml(BOROUGH_NAMES[e.boro] ?? e.boro)}</span>
+            <span class="results-item-rate">${escapeHtml(e.rateLabel)}</span>
+          </span>
         </button>`,
       )
       .join("");
@@ -55,4 +59,16 @@ export function buildResultsList(root: HTMLElement, options: ResultsListOptions)
  * BBL rather than hiding the building from the list. */
 export function labelFor(bbl: string, addr: string | null | undefined): string {
   return addr ? titleCaseAddress(addr) : `BBL ${bbl}`;
+}
+
+/** Unlike `addr`, r1/r2 are lean-schema fields present at *every* zoom (see
+ * colors.ts), so the rate can always be shown regardless of how zoomed out
+ * the list was built at. Labeled "(est.)" for the tier-2/DOF-value fallback
+ * -- never blended with tier-1's sale-verified number unlabeled, matching
+ * the same tier1-vs-tier2 distinction the map/legend/popup all make
+ * elsewhere (PLAN.md's Core metric: the two aren't directly comparable). */
+export function rateLabelFor(t1: number, r1: number | null | undefined, r2: number | null | undefined): string {
+  if (t1 === 1 && r1 != null) return formatRate(r1);
+  if (r2 != null) return `${formatRate(r2)} (est.)`;
+  return "no data";
 }
