@@ -27,7 +27,7 @@ import { createFilterController, renderFilterControls, type FilterableLayer } fr
 import { buildPopupHtml, type BuildingProps } from "./popup";
 import { setupSearch, type SearchRecord } from "./search";
 import { setupStory, GRIFFIN_CENTER, GRIFFIN_BBL } from "./story";
-import { buildResultsList, labelFor, rateLabelFor, type ResultEntry } from "./results";
+import { addressLabel, buildResultsList, rateLabelFor, rateValueFor, type ResultEntry } from "./results";
 
 const TIER2_LAYER_IDS = ["fill-tier2", "fill-tier2-hatch", "circle-tier2"];
 
@@ -545,28 +545,41 @@ map.on("style.load", () => {
       ? DIVERGENCE_LAYERS.filter((id) => CLICKABLE_LAYERS.includes(id))
       : CLICKABLE_LAYERS;
     const features = map.queryRenderedFeatures({ layers });
+    let sawUnaddressed = false;
     const byBbl = new Map<string, ResultEntry>();
     for (const f of features) {
       const props = f.properties as BuildingProps;
       if (!props?.bbl || byBbl.has(props.bbl) || !f.geometry) continue;
+      // addr is a detail-zoom-only field (see results.ts's addressLabel) --
+      // rather than showing a BBL-labeled row, skip it and let the "zoom in"
+      // hint below explain why the list looks sparse while zoomed out.
+      if (!props.addr) {
+        sawUnaddressed = true;
+        continue;
+      }
       const [lon, lat] = featureCenter(f.geometry);
       byBbl.set(props.bbl, {
         bbl: props.bbl,
-        label: labelFor(props.bbl, props.addr),
+        label: addressLabel(props.addr),
         boro: props.boro,
         lon,
         lat,
         rateLabel: rateLabelFor(props.t1, props.r1, props.r2),
+        rate: rateValueFor(props.t1, props.r1, props.r2),
       });
     }
 
-    const hasAddr = (e: ResultEntry) => !e.label.startsWith("BBL ");
+    // Decreasing effective rate (most-overtaxed first) per user request --
+    // rows with no rate at all ("no data") sort to the bottom regardless.
     const entries = [...byBbl.values()].sort((a, b) => {
-      const byHasAddr = Number(hasAddr(b)) - Number(hasAddr(a));
-      return byHasAddr !== 0 ? byHasAddr : a.label.localeCompare(b.label);
+      if (a.rate == null && b.rate == null) return a.label.localeCompare(b.label);
+      if (a.rate == null) return 1;
+      if (b.rate == null) return -1;
+      return b.rate - a.rate;
     });
 
-    resultsController.update(entries.slice(0, MAX_RESULTS), entries.length > MAX_RESULTS);
+    const emptyHint = sawUnaddressed && entries.length === 0 ? "Zoom in to see building addresses." : undefined;
+    resultsController.update(entries.slice(0, MAX_RESULTS), entries.length > MAX_RESULTS, emptyHint);
   };
   map.on("moveend", refreshResults);
 

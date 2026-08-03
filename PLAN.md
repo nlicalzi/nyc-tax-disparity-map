@@ -585,6 +585,30 @@
     ID+attribute selector, specific enough to win). Verified both states
     post-fix: a zero-size box when unfiltered, a real box with content once
     a filter is narrowed.
+  - **Follow-up (2026-08-02): addresses only, sorted by decreasing rate.**
+    User feedback: "I want it to list addresses, not BBLs. I also want it to
+    sort by DECREASING effective rate." The BBL fallback from the prior
+    entry is gone entirely -- `refreshResultsImpl` (`main.ts`) now skips any
+    rendered feature with no `addr` (detail-zoom-only, see above) instead of
+    labeling it `BBL ######`. Since `addr` requires being zoomed in to the
+    tileset's single detail zoom, this means the list can legitimately go
+    empty while zoomed out and filtered; rather than showing a generic "no
+    buildings" message in that case (misleading -- buildings *are* there,
+    just unaddressed at this zoom), a `sawUnaddressed` flag distinguishes it
+    and shows "Zoom in to see building addresses." instead. New
+    `rateValueFor()` in `results.ts` mirrors `rateLabelFor()`'s tier-1-then-
+    tier-2 precedence but returns the raw number instead of a formatted
+    string, so the sort key can never drift out of sync with what's printed
+    next to it; `refreshResultsImpl` sorts by that value descending (most-
+    overtaxed first), with `null` ("no data") rows always sorting last
+    regardless of direction. `labelFor` was removed (no BBL case left to
+    handle) in favor of a plain `addressLabel()`. Verified via Playwright
+    against the full citywide production build (`vite preview`): searching
+    to a dense Bed-Stuy block at z17 and filtering produced addresses only
+    (no `BBL ` rows), rates strictly descending (21.63% -> 18.27% -> 8.80%
+    -> ... -> 5.60%); zooming out to ~z11 while still filtered showed the
+    new "Zoom in to see building addresses." hint with zero rows instead of
+    stale/wrong content.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and
