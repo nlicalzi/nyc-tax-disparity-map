@@ -293,6 +293,27 @@ body.story-done {
   margin-bottom: 0;
 }
 
+.story-stat {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.story-stat-value {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+
+.story-stat-caption {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
 .story-swatch {
   display: inline-block;
   width: 10px;

@@ -11,7 +11,7 @@ export interface SearchRecord {
   lat: number;
 }
 
-// Matches pipeline/08_build_tileset.py's build_search_index -- array-of-arrays
+// Matches pipeline/11_build_tileset.py's build_search_index -- array-of-arrays
 // [bbl, addr, boro, lon, lat], gzip-compressed (see that script's docstring
 // for why: array-of-objects repeats every key name 856K times, and the
 // uncompressed file alone was ~80MB, too much to keep in the repo raw).

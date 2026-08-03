@@ -8,7 +8,7 @@ import {
   titleCaseAddress,
 } from "./format";
 
-/** Matches the tile schema built in pipeline/08_build_tileset.py. Detail
+/** Matches the tile schema built in pipeline/11_build_tileset.py. Detail
  * fields (addr/sale/saledt/pctl/nsale) only exist at the tileset's single
  * highest native zoom -- see that script's docstring -- so they're optional
  * here even though every building has an address in the source data. */
@@ -27,6 +27,15 @@ export interface BuildingProps {
   saledt?: string | null;
   pctl?: number | null;
   nsale?: number | null;
+  // v2 roadmap (PLAN.md milestone 10): owner-entity, stacked-benefit, and
+  // dollar-gap fields, all detail-zoom-only like the fields above.
+  llcPct?: number | null;
+  ownerEntity?: string | null;
+  ex421a?: number | null;
+  exJ51?: number | null;
+  abCoop?: number | null;
+  abJ51?: number | null;
+  gap?: number | null;
 }
 
 function row(label: string, value: string, sub?: string): string {
@@ -71,6 +80,25 @@ export function buildPopupHtml(p: BuildingProps): string {
         `<p class="popup-scale">Pays a lower effective rate than ${p.pctl}% of ${boroName} buildings in this same tax class with a recent sale.</p>`,
       );
     }
+    // v2 roadmap item 1 -- only defined for class-2 (co-op/condo) buildings,
+    // see pipeline/07_compute_dollar_gap.py. Shown even at $0, which is
+    // itself a real, meaningful result (see that script's module docstring
+    // -- a same-priced 1-3 family sale's own trend line is often just as
+    // low, not a "no data" case), never blended into the effective-rate row
+    // above. Like `sale` above, this is a SUM across every unit in the
+    // building that sold -- explicitly labeled "combined" when nsale > 1 so
+    // it doesn't read as this one building's own unit-lot figure (a multi-
+    // unit tower's total can differ a lot from any single unit's own gap,
+    // e.g. 220 Central Park South's combined total is nonzero even though
+    // Ken Griffin's own unit computes to exactly $0 -- see "The story").
+    if (p.cls === "2" && p.gap != null) {
+      const combined = (p.nsale ?? 1) > 1;
+      rows.push(
+        p.gap > 0
+          ? `<p class="popup-scale">An estimated ${formatMoney(p.gap * 100)}${combined ? " combined" : ""} below what a similarly priced 1&ndash;3 family sale's own trend line predicts (2016&ndash;2025 sales-verified sample)${combined ? ", summed across this building's sold units" : ""}.</p>`
+          : `<p class="popup-scale">At or above what a similarly priced 1&ndash;3 family sale's own trend line predicts.</p>`,
+      );
+    }
   } else if (p.r2 != null) {
     if (p.mkt != null) rows.push(row("DOF's assessed value", formatMoney(p.mkt * 10_000)));
     if (p.tax != null) rows.push(row("Computed annual tax", formatMoney(p.tax * 100)));
@@ -80,6 +108,34 @@ export function buildPopupHtml(p: BuildingProps): string {
     );
   } else {
     rows.push(`<p class="popup-note">No valuation on record (likely tax-exempt).</p>`);
+  }
+
+  // Owner-entity flag (PLAN.md v2 roadmap item 2) -- `llcPct != null` gates
+  // on detail-zoom data being loaded at all, same pattern as `addr` above.
+  // A single owner's actual NAME is only ever shipped when it's an
+  // LLC/LP-style entity (see pipeline/11_build_tileset.py) -- an individual
+  // homeowner's name is never surfaced, by design, so no line is shown for
+  // that case rather than reporting "not an entity."
+  if (p.llcPct != null) {
+    if (p.units === 1 && p.ownerEntity) {
+      rows.push(row("Owner on record", escapeHtml(p.ownerEntity), "LLC/LP"));
+    } else if (p.units > 1) {
+      rows.push(row("Held by an LLC/LP-named owner", `${p.llcPct}% of units`));
+    }
+  }
+
+  // Stacked-benefit flags (PLAN.md v2 roadmap item 3) -- reported as
+  // separate, plainly-labeled facts, never folded into the effective-rate
+  // row. `ex421a != null` gates on detail-zoom data being loaded.
+  if (p.ex421a != null) {
+    const benefits: string[] = [];
+    if (p.ex421a) benefits.push("421-a exemption");
+    if (p.exJ51) benefits.push("J-51 exemption");
+    if (p.abJ51) benefits.push("J-51 abatement");
+    if (p.abCoop) benefits.push("co-op/condo abatement");
+    if (benefits.length) {
+      rows.push(row("Tax benefits on record", benefits.join(", ")));
+    }
   }
 
   return `

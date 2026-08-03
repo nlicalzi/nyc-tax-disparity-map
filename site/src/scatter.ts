@@ -10,7 +10,7 @@ export interface ScatterRow {
   boro: string;
 }
 
-// Matches pipeline/08_build_tileset.py's build_scatter_sample -- array-of-arrays
+// Matches pipeline/11_build_tileset.py's build_scatter_sample -- array-of-arrays
 // [unit_key, sale_k, rate_bp, cls, boro], gzip-compressed, same pattern as
 // the search index (see gzip-fetch.ts).
 type RawRow = [string, number, number, string, string];
@@ -20,7 +20,7 @@ const SCATTER_URL = `${import.meta.env.BASE_URL}${
 }`;
 
 // Griffin's individual unit-lot (boro-block-lot, not the PLUTO building bbl)
-// -- see pipeline/08_build_tileset.py's GRIFFIN_UNIT_* constants and
+// -- see pipeline/11_build_tileset.py's GRIFFIN_UNIT_* constants and
 // PLAN.md's "The story" section for the validated anchor figures this point
 // must match ($239,958,219 sale, ~0.35% effective rate).
 export const GRIFFIN_KEY = "1-1030-1082";

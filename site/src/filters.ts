@@ -16,7 +16,7 @@ export interface FilterableLayer {
  * tax-class, and (where applicable) divergence-bucket selections from the
  * filter UI. Omits a category's clause entirely when everything in it is
  * selected, so buildings with a missing boro/cls value (rare, but see
- * 04_build_effective_rates.py's mode() aggregate) don't vanish under the
+ * 06_build_effective_rates.py's mode() aggregate) don't vanish under the
  * default "everything on" state -- an `in` filter against a value list only
  * matches non-null fields, so it would otherwise hide those buildings even
  * though nothing was deselected. */

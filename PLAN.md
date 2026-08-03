@@ -609,6 +609,242 @@
     -> ... -> 5.60%); zooming out to ~z11 while still filtered showed the
     new "Zoom in to see building addresses." hint with zero rows instead of
     stale/wrong content.
+- **Milestone 8 (v2 roadmap, pipeline extension): DONE (2026-08-03).** Owner/
+  LLC flag threaded through to building grain, two new DOF fetches joined in
+  (`muvi-b6kx` exemption detail, `rgyu-ii48` abatement detail). Pure data
+  work, no tiling/geometry risk, per the v2 roadmap's sequencing rationale.
+  - **Pipeline renumbered to keep the documented run order honest.** The new
+    fetches (`04_fetch_exemptions.py`, `05_fetch_abatements.py`) must run
+    *before* the build step that joins them, so `04_build_effective_rates.py`
+    -> `06`, `05_validate.py` -> `07`, `06_fetch_geometry.py` -> `08`,
+    `07_join_geometry.py` -> `09`, `08_build_tileset.py` -> `10`. Pure
+    `git mv` + reference fixups (self-referencing docstrings, cross-file
+    comments, `pipeline/README.md`) -- no logic changed in any renamed file
+    beyond the additions below.
+  - **Both new dataset schemas verified live before writing fetch code**,
+    per this project's existing discipline (Data sources section) --
+    neither matched a naive guess:
+    - `muvi-b6kx` has real `boro`/`block`/`lot` columns, joining exactly like
+      the sales table. Carries roll-stage `period` values (1/3, not
+      quarters) same as the valuation table itself -- filtered to
+      `period='3'` (final) to match `01_fetch_valuation.py`'s vintage, not
+      just `year='2026'` alone as the original roadmap note said (verified
+      live: period 1 and 3 have *different* `exmp_code` rows for the same
+      parcel, not duplicates -- an unfiltered join would double-count).
+    - `rgyu-ii48` has **no boro/block/lot columns at all** -- only a padded
+      fixed-width `parid` in the same boro(1)+block(5)+lot(4)-digit layout
+      as valuation's own `parid` (verified by parsing one and confirming it
+      resolves to a real known building). And unlike the exemption table,
+      this one is genuinely quarterly: `appliedabt` for one parcel's CONDO
+      abatement was $2042.82/$2024.10/$2014.22/$2014.22 across 1Q-4Q,
+      summing to a plausible ~$8,095/year -- not a repeated annual snapshot.
+      `06_build_effective_rates.py` sums all 4 quarters per
+      (boro,block,lot,tccode) before pivoting into the two reported
+      groups (co-op/condo, J-51), a step the original roadmap note hadn't
+      anticipated (it assumed a flat per-parcel dollar amount).
+  - **LLC/LP owner-name heuristic**: word-boundary regex
+    (`\b(LLC|LLLP|LLP|LP)\b`) run against the full citywide roll gives 6.6%
+    class 1 / 23.2% class "2" exactly (not the 2A/2B/2C subtypes blended
+    in) / 59.7% class 2B / 36.1% class 4 -- matches the v2 roadmap's
+    research numbers (6.4% / 23.1% / 59.2% / 35.8%) closely enough to
+    confirm it's the same heuristic (small drift likely from that research
+    being scoped to tier-1 units only, not the full roll). Reported at
+    building grain as `llc_unit_pct` (fraction of a building's units held by
+    an LLC/LP-named owner) rather than a single "the building's owner"
+    string -- a condo building's units mostly have different owners, so
+    `mode(owner)` would misreport "who owns the building" as whichever
+    owner happens to hold the most units. 220 Central Park South: 79.5%
+    LLC/LP by unit count (93 of 117), consistent with the roadmap's
+    anecdotal owner-name sample for that building.
+  - **Stacking coverage, citywide (class 2, 321,914 units)**: 34,638 units
+    carry a 421-a exemption, 16,985 a J-51 exemption, 69,615 a co-op/condo
+    abatement, 13,323 a J-51 abatement -- and 8,918 units carry *both* the
+    J-51 exemption and the J-51 abatement simultaneously, confirming the
+    roadmap's "stacking" claim is real at the data level (not yet checked
+    against the underpaying-tier correlation -- that's milestone 9, still
+    open). All four flags/dollar amounts land as separate fields
+    (`has_421a_exemption`, `exemption_421a_amt`, etc.), never blended into
+    `computed_tax`/`effective_rate`.
+  - Re-ran `06`(build)->`08`(validate, its number at the time)->`10`(join
+    geometry) end-to-end after the change: unit/building row counts
+    unchanged from the pre-milestone-8 baseline (1,164,670 units, 857,253
+    buildings, 856,471 geometry-resolved -- same 98.73%/1.24%/0.04%
+    direct/condo-crosswalk/point-fallback split), Griffin assertion still
+    passes (0.3486%), validation still all-PASS -- confirms the new joins
+    are additive and didn't disturb the existing computation. (Renumbered
+    again immediately after, to insert milestone 9's own new step -- see
+    below; `pipeline/README.md` always reflects the current, final
+    numbering, this note describes what ran at the time.)
+- **Milestone 9 (v2 roadmap, trend-line + dollar gap + stacking): DONE
+  (2026-08-03).** The highest-stakes item in the roadmap, per its own
+  sequencing note -- and validation caught a real problem with the
+  originally-proposed method before it shipped, not after.
+  - **New pipeline step, `07_compute_dollar_gap.py`** (inserted before the
+    renumbered `08_validate.py`/`09_fetch_geometry.py`/`10_join_geometry.py`/
+    `11_build_tileset.py` -- another `git mv` pass, same rationale as
+    milestone 8's). Re-derives the unit->PLUTO-bbl mapping (duplicates the
+    small condo-billing-lot join block from `06_build_effective_rates.py`'s
+    `BUILDING_SQL`) rather than importing it, since each pipeline step is a
+    standalone script and the module can't be `import`ed cleanly anyway
+    (digit-prefixed filename) -- same duplication precedent as
+    `11_build_tileset.py`'s own `BORO_CODE_TO_PLUTO` copy.
+  - **The roadmap's proposed method (linear OLS fit of `effective_rate` on
+    `log10(sale_price)`, the same form `site/src/scatter.ts` already uses
+    for its client-side visual trend line) breaks when used as an
+    extrapolated benchmark FUNCTION, not just a chart line.** Fitted against
+    the full class-1 tier-1 population (193,478 units, vacant-land `bldg_
+    class LIKE 'V%'` excluded -- 3,458 of 196,936, since a vacant lot isn't
+    a "home" and some sell for absurd outlier prices up to $869M at near-
+    zero rates), the line crosses zero around $2.4M sale price and goes
+    *negative* beyond it. `scatter.ts` never notices this because
+    `fitByClass` only ever draws the line between its own sample's observed
+    min/max x -- it never evaluates the fit outside the data it was fit on.
+    The dollar-gap use case needs the opposite: evaluate the benchmark AT
+    class-2's own (often much higher) price, which is exactly extrapolation
+    beyond class 1's domain. A negative fitted rate floors `gap` at 0 for
+    ~23% of class-2 tier-1 units for a fitting-artifact reason, not a real
+    one (verified against real data: class-1 sales above $10M still show a
+    ~0.4-0.5% median rate, never zero).
+  - **Fix: fit `ln(effective_rate) ~ log10(sale_price)` instead** (log-log /
+    power-law form, via DuckDB's `regr_slope`/`regr_intercept` aggregates) --
+    mathematically guaranteed positive everywhere, and empirically closer to
+    the real bucketed medians at the high end than the raw linear fit.
+    Fitted slope/intercept: -1.301349 / 2.983903 (n=193,389 after also
+    requiring `effective_rate > 0`).
+  - **A second, more fundamental finding survives the functional-form fix,
+    confirmed with zero fitting at all (raw matched-price-bucket medians):
+    class-1 homes already pay a LOWER median effective rate than class-2
+    units at every price band from $300K up** (e.g. $5-10M: class 1 median
+    0.48% vs class 2 median 0.94%; only below $300K does class 1 pay more).
+    This is the same mechanism as the existing 2026-07-31 correction in "The
+    story" below (class 1's own assessment-growth cap suppresses value at
+    least as steeply as class 2's income-approach method) -- not a new
+    mechanism, but a new consequence of it: **the "vs. class-1 trend line"
+    benchmark computes to exactly $0 for Ken Griffin's own unit** (fitted
+    class-1 rate at his $239,958,219 price is 0.036%, lower than his actual
+    0.3486%). This doesn't contradict the site's core Griffin anecdote
+    (which compares his rate to a modest home's rate, at a different, much
+    lower price -- a different and still-valid comparison); it means this
+    dollar figure is a separate, complementary metric, not the Griffin
+    anecdote restated in dollars.
+  - **Checked with the user before proceeding (2026-08-03), since this
+    changes what the milestone-10 hero stat can honestly claim.** Decision:
+    report both, clearly separated -- keep the existing Griffin anecdote
+    exactly as-is (primary story, unchanged), add the dollar-gap total as a
+    separate, precisely-captioned stat, and fold the Griffin-specific null
+    result into the existing class-1-rate-also-falls narrative as a related,
+    interesting finding rather than hiding it.
+  - **Headline number: $67,678,889 total** (`dollar_gap_vs_class1_trend`,
+    summed across 124,046 class-2 tier-1 units, 21,250 of them nonzero,
+    17.1%) -- **not** the rejected $38.6B full-value counterfactual, and
+    small enough relative to it that `08_validate.py` now asserts the total
+    stays under $1B as a regression guard against that mistake resurfacing.
+    Aggregated to building grain as `building_dollar_gap_vs_class1_trend`
+    (`07_compute_dollar_gap.py` re-derives the unit->bbl join to do this,
+    then rewrites `building_effective_rates.parquet` in place) -- building-
+    level total is $64,335,832, ~5% below the unit-level total because
+    ~0.2% of class-2 tier-1 units (215 of 124,046) never resolve to a PLUTO
+    bbl at all (same known gap as milestone 1/2's ~98.8% unit->building
+    match rate) and skew toward higher gap-dollar units; `08_validate.py`
+    bounds this at 10%, not exact-match, with the real number recorded here.
+  - **Stacking correlation check (item 3's open question) -- answered, and
+    it's specific, not universal.** Compared incidence + average dollar gap
+    among class-2 tier-1 units with `gap > 0` ("flagged") vs. the full
+    class-2 tier-1 population:
+    - **J-51 (both the exemption and the separate abatement) concentrates
+      meaningfully in the flagged tier**: exemption incidence 9.7% (flagged)
+      vs. 2.6% (all); abatement 9.3% vs. 2.7% -- roughly 3.5x baseline for
+      both. Average gap dollar amount among J-51-flagged units is also
+      elevated ($849-$917 vs. ~$536 baseline). This is the strongest
+      confirmation of "stacking" in the whole check.
+    - **421-a does NOT concentrate in the flagged tier** -- if anything,
+      lower incidence there (7.4% flagged vs. 14.5% overall) and lower
+      average gap ($249 vs. ~$536 baseline). Plausible read: 421-a mostly
+      targets newer/rental-adjacent construction, a different price segment
+      than where this specific price-matched benchmark flags the largest
+      gaps.
+    - **Co-op/condo abatement is flat** (24.7% flagged vs. 25.9% overall,
+      average gap below baseline) -- no meaningful concentration either way.
+    - **LLC/LP ownership is roughly flat by incidence** (22.6% flagged vs.
+      26.1% overall) **but notably elevated by average dollar amount**
+      ($1,115 vs. ~$536 baseline) -- when an LLC/LP-owned unit IS flagged,
+      the gap tends to be bigger, even though LLC/LP units aren't
+      disproportionately likely to be flagged in the first place.
+    - Net: the roadmap's "stacked, not coincidental" hypothesis is real but
+      narrower than a blanket claim across all four benefit types -- true
+      specifically for J-51, not for 421-a or the co-op/condo abatement.
+      Milestone 10's UI copy must scope any "stacking" claim to J-51
+      specifically, per this finding, not generalize it.
+  - Re-ran `06`->`07`->`08`(validate)->`10`(join geometry) end-to-end after
+    building the fix: all validation checks pass, including two new ones
+    (`08_validate.py`) -- Griffin's `dollar_gap_vs_class1_trend` is exactly
+    0, and building-level/unit-level gap totals reconcile within the known
+    ~5% PLUTO-match shortfall. Row counts/geometry-resolution percentages
+    unchanged from milestone 8's baseline.
+- **Milestone 10 (v2 roadmap, UI): DONE (2026-08-03).** Hero dollar stat,
+  popup additions, methodology footer update -- verified against both the
+  Manhattan dev sample and the full citywide production build (`npm run
+  build && npm run preview`), same discipline as every prior milestone.
+  - **Tile schema**: 7 new `DETAIL_FIELDS` in `11_build_tileset.py`
+    (`llcPct`, `ownerEntity`, `ex421a`, `exJ51`, `abCoop`, `abJ51`, `gap`) --
+    single-top-zoom-only, same size-management rule as `addr`/`sale`/etc.
+    since milestone 4. Citywide production tileset: 76.7MB (up from the
+    previous 74MB baseline, still comfortably under GitHub's 100MB limit).
+  - **Privacy design decision, made without being asked, worth recording**:
+    `ownerEntity` (the one field that could carry a real name) is filtered
+    to NULL server-side in the SQL itself unless `unit_count = 1 AND
+    llc_unit_count > 0` -- an individual homeowner's actual name is never
+    shipped to the tile at all, not just hidden client-side (hiding
+    client-side wouldn't matter anyway since the `.pmtiles` file itself is
+    publicly downloadable). Multi-unit buildings only ever get the
+    aggregate `llcPct`, never any single owner's name. This wasn't asked
+    for explicitly but follows directly from item 2's own framing
+    ("reported at building grain," never a name lookup).
+  - **Popup additions** (`popup.ts`): a trend-line-comparison line (shown
+    even at $0, since that's a real result per milestone 9, not "no data");
+    an owner-on-record line (LLC/LP entity name for single-unit buildings,
+    aggregate % for multi-unit); a tax-benefits line listing whichever of
+    421-a/J-51-exemption/J-51-abatement/co-op-condo-abatement are present.
+    All three gated on the relevant detail field being non-null (same
+    zoomed-in-enough pattern as `addr`), all separately labeled, never
+    blended into the effective-rate row.
+  - **Real bug caught by testing against an actual building, not assumed**:
+    the trend-line-comparison line is a building-level SUM across every
+    unit that sold (same aggregation as the existing `sale`/`nsale`
+    fields) -- for 220 Central Park South this is $208K, nonzero, even
+    though Ken Griffin's own unit-lot computes to exactly $0 (milestone 9's
+    finding). An early version of the line didn't distinguish these, which
+    would have read as directly contradicting the story's own "$0 for
+    Griffin" claim the moment someone clicked his building. Fixed the same
+    way the milestone-4 popup handles `sale`: label it "combined" and "summed
+    across this building's sold units" whenever `nsale > 1`, exactly
+    mirroring the "Combined price, N units sold here" pattern. Caught by
+    actually clicking 220 Central Park South in a real Playwright run
+    against the dev-sample tileset, not by reasoning about the SQL.
+  - **Hero stat**: added to the existing "It's not just one building" story
+    step (`site/index.html`, step 2 -- the chart step, not the Griffin step)
+    as a visually distinct `.story-stat` block (large hero-figure number per
+    the dataviz skill's stat-tile spec) -- **not** merged into the Griffin
+    card, per the user's explicit decision on how to frame the milestone-9
+    finding (see above). Copy states the $67.7M figure's exact scope (2016-
+    2025 sales-verified sample, vs. the 1-3 family trend line, not full
+    value) and explicitly calls out that Griffin's own unit computes to $0
+    by this specific measure, tying it back to the existing assessment-cap
+    explanation already in that same story card rather than introducing a
+    new, unexplained mechanism.
+  - **Methodology footer** (`methodology.ts`): two new paragraphs (the
+    trend-line-benchmark method + its 2016-2025/~124K-sale scope; the
+    owner/tax-benefit flags' sourcing and the LLC/LP heuristic's
+    text-pattern-not-legal-determination caveat) plus the two new dataset
+    IDs added to the Data vintage paragraph (`muvi-b6kx`, `rgyu-ii48`).
+  - Verified via Playwright against both tilesets: dev sample (142
+    Edgecombe Ave -- multi-unit, 33% LLC, stacked J-51 exemption +
+    abatement, $23K gap; 506 Manhattan Ave -- single-unit, "HPH CHOSEN,
+    LLC" owner shown by name, J-51 exemption, $20K gap) and the full
+    citywide production build (Griffin's building via the story's own
+    Griffin step, since `window.__map` -- used for dev-loop testing --
+    isn't exposed in production builds; hero stat renders `$67.7 million`
+    citywide). Zero console errors in both. `npx tsc --noEmit` clean.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and
@@ -1023,6 +1259,167 @@ agent doesn't spend budget building things nobody asked for:
    Status above for the deploy mechanism, the custom-domain URL, the
    real-CDN verification, and the search-popup bug found and fixed along
    the way.
+
+## v2 roadmap: revenue gap, ownership, stacked benefits (research, 2026-08-03)
+Prompted by a step back from feature work to ask what would make the
+site's *argument* — not just its data coverage — stronger: turn the rate
+gap into a dollar transfer, show who actually benefits (ownership), and
+show the mechanism is stacked, not a single quirk. Researched and verified
+against the live Socrata API and the pipeline's own cached data (not
+guessed dataset IDs — same discipline as the Data sources section above).
+Headline result: **items 1 and 4 need zero new data fetching** — the
+fields already sitting in `data/cache/` (fetched, in one case, and unused
+downstream) cover most of it. Item 2 has a cheap already-in-hand version
+and a heavier stretch version.
+
+### 1. Dollar-scale of the disparity ("$X in forgone tax," not just "X% vs Y%")
+**No new data needed.** `unit_effective_rates.parquet` already has
+`sale_price`, `computed_tax`, `class_prefix`, `tier` for every tier-1 unit
+(196,936 class 1 / 124,046 class 2 / 27,245 class 4 sale-verified units).
+
+**Pitfall found, worth recording so it isn't re-derived and re-fallen-into
+later:** the obvious counterfactual — `sale_price × class_rate` minus
+actual tax, summed over class 2 — is wrong. Computed it: it says class 2
+"forgoes" $38.6B and class 1 forgoes $36.9B (95.9% of what class 1 *could*
+owe). That's not the disparity, that's NYC's entire assessment system,
+which taxes a fraction of market value **by design** for every class (caps,
+assessment ratios) — class 1 isn't a clean 100%-of-value baseline either.
+Comparing everyone to "full value" restates a known, intentional feature
+of the system as if it were the finding.
+
+The right baseline is **class 1's own effective-rate curve**, not full
+value — which is already this site's implicit comparison (Griffin vs. "a
+modest home"). Tried literal price-bucket matching (bucket class-2 sales by
+log10(price), benchmark against the median class-1 tier-1 rate in the same
+bucket): it works in the $300K–$30M range (and there, class 2 mostly pays
+*at or above* class 1's rate at the same price — the mid-market isn't
+where the story lives) but **silently drops the top of the market
+entirely** — no class-1 home sells for $100M+, so there's no bucket to
+match Griffin's $240M sale against, and an inner join just discards it.
+The disparity this site exists to show is concentrated exactly in the
+range this naive method can't see.
+
+Fix: reuse the method `site/src/scatter.ts` already uses client-side
+(`linearRegression`/`fitByClass`, lines ~52–105) — an OLS fit of effective
+rate against log10(sale price), separately per class — but compute it
+**server-side in the pipeline against the full tier-1 population**
+(scatter.ts only sees a downsampled `scatter-sample.json.gz`), and use the
+fitted line as a smooth benchmark function defined at every price
+including the tail, not empirical bucket medians that run out of data
+there.
+- New pipeline step: fit `class_1_rate(log10(price))`; for every class-2
+  tier-1 unit, `gap = max(0, class_1_rate(log10(sale_price)) × sale_price
+  − computed_tax)`; sum for a headline total.
+- Must be labeled precisely: this is "forgone tax among co-op/condo units
+  that sold 2016–2025, relative to what the trend line 1–3 family sales
+  fetch at the same price," not "citywide, every year." Tier-1 coverage is
+  a decade-of-sales sample (124,046 class-2 units), not the standing
+  population of ~700K+ class-2 units — say so in the UI, same honesty norm
+  as the existing tier1/tier2 split.
+- UI: a hero stat near the Griffin anchor and/or scatter chart
+  ("$X collectively underpaid, 2016–2025 sales, relative to the 1–3
+  family rate curve") plus the existing per-building popup gets a
+  "vs. the class-1 trend line at this price" line alongside its existing
+  percentile stat.
+
+### 2. Who benefits (ownership)
+**Already-in-hand version needs zero new data.** `01_fetch_valuation.py`
+already selects `owner` from `8y4t-faws` (line 34) — it survives all the
+way through `unit_computed`/`unit_effective_rates.parquet`
+— just dropped before `building_effective_rates.parquet` (only
+`ANY_VALUE`'d columns survive the building-level aggregation in
+`04_build_effective_rates.py`'s `BUILDING_SQL`).
+
+Ran it: at 220 Central Park South, unit owners are almost entirely LLCs
+("220 CPS 63 LLC", "220 CPS 71 HOLDING LLC", "PARKVIEW RE HOLDINGS LLC",
+"CRYSTALLE LLC", "220 CPS PH75 LP", ...) — not people. Citywide LLC/LP-name
+incidence by class: class 1 (1–3 family) 6.4%, class 2 (co-op/condo/
+rental) 23.1% overall (2B specifically, mostly small commercial-condo
+units: 59.2%), class 4 (commercial) 35.8%. Real, ready-made signal for
+"who actually holds these units," no fetch required.
+
+**Caveat found, needs to shape the framing:** LLC share isn't cleanly
+monotonic with how favorable a class-2 unit's rate is — split tier-1
+class-2 units into effective-rate quintiles and it's U-shaped (36.6% LLC
+in the most-favored quintile, avg. sale price $5.3M; but also 35% in the
+*least*-favored quintile, likely small mixed-use/commercial-flavored
+class-2 units, not luxury condos). A blanket "LLC ownership = disparity
+beneficiary" claim would overreach. The clean version is narrower: among
+the specific luxury tier the site's own trend-line analysis (item 1) flags
+as most-underpaying, LLC ownership is elevated and sale prices are far
+above the citywide median — report it there, scoped, not as a citywide
+LLC-vs-rate correlation.
+
+**Stretch version (real new fetch, verified feasible, heavier lift):**
+ACRIS. Chain confirmed live: `ACRIS - Real Property Legals` (`8h5j-fqxa`,
+BBL ↔ `document_id`) → `ACRIS - Real Property Master` (`bnx9-e6tj`, 17.0M
+docs, has `doc_type`/`document_date`/`document_amt`) → `ACRIS - Real
+Property Parties` (`636b-3b5g`, 46.5M party records — confirmed schema has
+`name`, `address_1`, `city`, `state`, `zip`, `country` per party, e.g. a
+real grantee record: "GARCIA, GRETEL, 200 WEST 56TH STREET, NEW YORK, NY").
+For a BBL's most recent recorded deed, the grantee party's mailing address
+gives an out-of-state (`state != 'NY'`) or foreign (`country != 'US'`)
+absentee signal, independent of the LLC-name heuristic. Not scoped for v2
+proper — flagging as phase-2b because the party_type grantor/grantee
+coding and doc_type filtering need real validation before trusting it, and
+because "mailing address on the last recorded deed" isn't necessarily the
+current owner (LLC membership can change hands without a new recordable
+deed) — needs its own caveat in the UI if built.
+
+### 3. Stacked benefits (mechanism isn't one quirk, it's several)
+**No new data needed beyond two more Socrata fetches, both keyed by the
+same `(boro, block, lot)` already used for the sales join.** Verified live,
+both covering FY2026 (our existing data vintage):
+- **`muvi-b6kx` — DOF Property Exemption Detail** (3.57M rows, years
+  2021–2027). Per-parcel `exmp_code` + `curexmptot` (dollar amount removed
+  from taxable value). Code meanings verified against `myn9-hwsy` — DOF's
+  own 243-row Exemption Classification Codes lookup table (also a live
+  Socrata dataset, so this can be joined programmatically rather than
+  hand-transcribed like the 4-number tax-rate table). 421-a family = codes
+  5110/5113/5114/5116/5118/5121 ("421A 10/15/20/25/35 YR ..." variants);
+  J-51 exemption = code 1920.
+- **`rgyu-ii48` — DOF Property Abatement Detail** (3.06M rows, taxyr
+  2021–2027). Per-parcel `tccode` + `appliedabt` (actual dollar abatement
+  applied to the bill, distinct from an exemption — this reduces the tax
+  itself, not the taxable value it's computed from). Co-op/condo abatement:
+  `tccode` CONDO/COOP, 278,143 FY2026 rows. J-51 *abatement*: `tccode` J51,
+  138,416 FY2026 rows — confirms J-51 is a real stacking example on its
+  own: the same building can carry both a J-51 exemption (in
+  `muvi-b6kx`) and a separate J-51 abatement (in `rgyu-ii48`)
+  simultaneously.
+- Plan: join both onto `unit_effective_rates` at `(boro, block, lot,
+  year=2026)`; add `has_421a`, `has_coop_condo_abatement`, `has_j51`
+  booleans plus their dollar amounts. **Open empirical question, not yet
+  checked:** whether the co-op/condo abatement and/or 421-a specifically
+  concentrate among the same units item 1 already flags as most-underpaying
+  relative to the class-1 trend line — that's the "stacked, not
+  coincidental" claim, and it needs to be run before it's asserted in the
+  UI, not assumed. Report the co-op/condo abatement and 421-a status as
+  additional, separately-labeled popup lines and a citywide summary stat —
+  never blended into the core effective-rate metric, matching the existing
+  tier1/tier2 labeling norm.
+
+### Sequencing
+Proposed as milestones 8–10, in this order because item 1's headline
+number is the highest-stakes to get wrong and should be validated before
+anything is built on top of it. **All three: DONE (2026-08-03)** — see the
+Status section above for full detail, actual numbers, and the real
+mid-implementation problems each one surfaced (the linear-fit-goes-negative
+bug and its log-log fix, the Griffin-building-vs-Griffin-unit popup
+distinction).
+8. ✅ Pipeline extension: carry `owner` through to `building_effective_rates`,
+   add the LLC/LP-name heuristic flag, fetch + join `muvi-b6kx` and
+   `rgyu-ii48`. Pure data work, no new geometry/tiling risk.
+9. ✅ Server-side class-1 trend-line fit + per-unit/citywide dollar-gap
+   computation (item 1); run the "does the stacking correlate with the
+   underpaying tier" check (item 3) now that both are joined. Checked in
+   with the user mid-milestone (2026-08-03) once validation surfaced that
+   Griffin's own unit computes to a $0 gap under this specific benchmark —
+   decision: report both numbers, clearly separated, not merged.
+10. ✅ Site UI: hero dollar-gap stat, popup additions (trend-line comparison,
+    owner/LLC flag, exemption/abatement flags), methodology footer updates
+    explaining the trend-line-benchmark methodology and its
+    decade-of-sales-sample scope.
 
 ## Risks / open questions
 - **Tax paid is computed, not scraped** — must be labeled clearly to avoid
