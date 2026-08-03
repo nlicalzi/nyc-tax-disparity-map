@@ -571,6 +571,20 @@
     directly comparable, and blending them was explicitly rejected back in
     Milestone 3). Rendered right-aligned on each row's second line, next to
     the borough.
+  - **Bug found by the user right after this shipped (2026-08-02): "empty
+    square" where the results panel should be, appearing even when nothing
+    was filtered.** Root cause: a classic CSS specificity gotcha, not a JS
+    bug. `#results`'s own rule sets `display: flex` -- an ID selector, which
+    beats the browser's built-in `[hidden] { display: none }` rule (a lower-
+    specificity attribute selector) -- so setting `resultsRoot.hidden = true`
+    in `main.ts` stopped actually hiding the panel; it kept rendering as an
+    empty flex box (no count text, no items, since `update()` never ran)
+    sitting on screen. Confirmed directly: `el.hidden` read `true` in the
+    DOM while `getBoundingClientRect()` still returned a real, non-zero box.
+    Fixed with an explicit `#results[hidden] { display: none; }` rule (an
+    ID+attribute selector, specific enough to win). Verified both states
+    post-fix: a zero-size box when unfiltered, a real box with content once
+    a filter is narrowed.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and

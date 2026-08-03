@@ -515,6 +515,16 @@ body.story-done .story-skip {
   overflow: hidden;
 }
 
+/* `#results { display: flex }` above (higher specificity than the browser's
+   default `[hidden] { display: none }` attribute-selector rule) was
+   silently overriding the `hidden` attribute -- setting `resultsRoot.hidden
+   = true` in JS stopped actually hiding the panel, leaving an empty flex
+   box rendered on screen (reported by the user as "an empty square").
+   Restores it with a selector specific enough to win. */
+#results[hidden] {
+  display: none;
+}
+
 .results-count {
   flex: none;
   padding: 10px 14px;
