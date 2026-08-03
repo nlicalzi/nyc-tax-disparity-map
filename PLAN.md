@@ -845,6 +845,46 @@
     Griffin step, since `window.__map` -- used for dev-loop testing --
     isn't exposed in production builds; hero stat renders `$67.7 million`
     citywide). Zero console errors in both. `npx tsc --noEmit` clean.
+  - **Follow-up (2026-08-03): tileset-size refactor, prompted by a direct
+    user ask ("how can we shrink that pmtiles file?").** Checked actual
+    incidence first rather than guessing: of 856,471 buildings, only 14%
+    have any LLC-owned unit and each of the four exemption/abatement flags
+    is under 1% -- yet the v2 schema above was writing an explicit `0`/
+    `false` for all seven new fields on every single feature, even though
+    `popup.ts` never rendered anything for the zero/false case anyway.
+    Fixed in `11_build_tileset.py`: `llcPct`/`ownerEntity`/the four
+    exemption-abatement flags (packed into one `benefits` bitmask int --
+    bit 0=421-a exemption, bit 1=J-51 exemption, bit 2=J-51 abatement, bit
+    3=co-op/condo abatement, decoded in `popup.ts`) are now `NULL` (dropped
+    by tippecanoe entirely) instead of an explicit default value.
+    **`gap` is deliberately excluded from this treatment** -- 0 is a real,
+    meaningful result there (milestone 9's Griffin finding), so it stays an
+    explicit 0 for the class-2-tier-1 population the metric applies to, and
+    is only NULL for buildings it doesn't apply to at all. A `dz` zoom-
+    marker field was drafted then removed after tracing through the actual
+    render logic: "not zoomed in" and "zoomed in but genuinely zero" already
+    produce the identical correct outcome (nothing rendered), so no signal
+    is needed to tell them apart -- caught before shipping an unnecessary
+    field, not after.
+  - **Real result, smaller than the raw byte count suggested.** The detail-
+    zoom band's pre-compression attribute payload dropped 11% (114.9MB ->
+    102.2MB), but the final compressed citywide `.pmtiles` only dropped
+    **~0.83MB (76,748,201 -> 75,893,914 bytes, ~1.1%)** -- MVT tiles are
+    already DEFLATE-compressed per-tile, and a column of repeated `0`/
+    `false` values was already compressing very efficiently before this
+    change, so most of the raw-byte win doesn't survive compression. Worth
+    doing regardless (zero information loss, cleaner schema, and it's real
+    money on the table) but not the lever to reach for if a much bigger cut
+    is needed -- see PLAN.md's Performance strategy / Milestone 6 notes for
+    the actual big-ticket items (MapLibre GL JS's ~380KB JS floor, the
+    OpenFreeMap basemap's ~900KB shared payload) if that's ever revisited.
+  - Verified via Playwright, same battery as above (142 Edgecombe, 506
+    Manhattan Ave, Griffin's building, plus a new negative test -- 11 West
+    18 Street, a class-2 tier-1 building with every new flag at its default
+    -- confirmed no stray "0% held by an LLC" or empty "Tax benefits"
+    line appears, while its gap line still correctly renders "At or above
+    ..." rather than disappearing) against both the dev sample and the
+    rebuilt full citywide production build. Zero console errors.
 
 ## The story
 NYC's property tax system is famously regressive at the top: because co-ops and

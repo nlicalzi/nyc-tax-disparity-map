@@ -174,7 +174,23 @@ DETAIL_FIELDS = [
     # v2 roadmap (PLAN.md, milestone 10): owner-entity + stacked-benefit +
     # dollar-gap popup fields. Same single-top-zoom restriction as the
     # fields above, same reason.
-    "llcPct", "ownerEntity", "ex421a", "exJ51", "abCoop", "abJ51", "gap",
+    #
+    # These are NULL (and therefore dropped by tippecanoe, not shipped as an
+    # explicit 0/false) whenever they'd be a default/inapplicable value --
+    # found via incidence check against the full citywide build: only
+    # 121K/856K buildings (14%) have ANY LLC-owned unit, and each of the four
+    # exemption/abatement flags is under 1%, so writing an explicit 0 for the
+    # other ~86-99% on every one of 856K features was pure waste (popup.ts
+    # never rendered anything for the zero/false case anyway -- omitting the
+    # property produces the identical "shows nothing" result whether the
+    # building is genuinely flag-free or the client just hasn't zoomed in
+    # far enough to have detail data at all, so no separate zoom-marker
+    # field is needed to tell the two apart). `gap` is the one exception: 0
+    # is a real, meaningful result there (milestone 9's finding), so it's
+    # only omitted for buildings the metric doesn't apply to at all (not
+    # class-2, or no qualifying sale), never omitted for a genuine $0 among
+    # class-2 tier-1 buildings.
+    "llcPct", "ownerEntity", "benefits", "gap",
 ]
 
 
@@ -207,26 +223,41 @@ def build_lean_geojson(con: duckdb.DuckDBPyConnection, out_path: str, sample: bo
                 CASE WHEN building_effective_rate_tier1 IS NOT NULL
                      THEN tier1_unit_count
                      ELSE NULL END AS nsale,
-                -- Owner-entity: aggregate % for every building, but the
-                -- single-owner NAME only when unit_count = 1 (a real
-                -- individual's name would otherwise leak for ordinary
-                -- class-1 homes -- see 07's/06's fields; deliberately never
-                -- shipped for the non-LLC/LP single-owner case either, only
-                -- when it IS an entity name).
-                CAST(ROUND(llc_unit_pct * 100) AS INTEGER) AS llcPct,
+                -- Owner-entity: aggregate % for every building that has
+                -- ANY LLC/LP-owned unit, omitted (NULL, not 0) otherwise --
+                -- matches popup.ts's existing "only render when > 0" logic
+                -- exactly, so this loses nothing the popup ever showed. The
+                -- single-owner NAME is still only ever set when unit_count = 1
+                -- (a real individual's name would otherwise leak for ordinary
+                -- class-1 homes -- see 07's/06's fields).
+                NULLIF(CAST(ROUND(llc_unit_pct * 100) AS INTEGER), 0) AS llcPct,
                 CASE WHEN unit_count = 1 AND llc_unit_count > 0 THEN sample_owner ELSE NULL END AS ownerEntity,
-                -- Stacked-benefit flags (PLAN.md v2 roadmap item 3) -- kept
-                -- as plain 0/1 flags, never blended into r1/r2/tax.
-                CASE WHEN has_421a_exemption THEN 1 ELSE 0 END AS ex421a,
-                CASE WHEN has_j51_exemption THEN 1 ELSE 0 END AS exJ51,
-                CASE WHEN has_coop_condo_abatement THEN 1 ELSE 0 END AS abCoop,
-                CASE WHEN has_j51_abatement THEN 1 ELSE 0 END AS abJ51,
+                -- Stacked-benefit flags (PLAN.md v2 roadmap item 3), packed
+                -- into one bitmask int instead of 4 separate 0/1 fields --
+                -- bit 0 (1) = 421-a exemption, bit 1 (2) = J-51 exemption,
+                -- bit 2 (4) = J-51 abatement, bit 3 (8) = co-op/condo
+                -- abatement (site/src/popup.ts decodes these same bits, kept
+                -- in sync by comment since the two languages can't literally
+                -- share a constant). NULL (not 0) when no flag applies --
+                -- matches popup.ts's existing "only render when benefits.length"
+                -- logic, so, like llcPct above, this loses nothing displayed.
+                NULLIF(
+                    (CASE WHEN has_421a_exemption THEN 1 ELSE 0 END)
+                    + (CASE WHEN has_j51_exemption THEN 2 ELSE 0 END)
+                    + (CASE WHEN has_j51_abatement THEN 4 ELSE 0 END)
+                    + (CASE WHEN has_coop_condo_abatement THEN 8 ELSE 0 END),
+                    0
+                ) AS benefits,
                 -- Dollar gap vs. the class-1 trend line (07_compute_dollar_gap.py)
-                -- -- $100 units, matching `tax`'s quantization. Meaningful only
-                -- for tier-1 class-2 buildings; 0 elsewhere by construction
-                -- (see that script's GAP_SQL, which only computes a nonzero
-                -- value for class-2 tier-1 units).
-                CAST(ROUND(building_dollar_gap_vs_class1_trend / 100) AS INTEGER) AS gap,
+                -- -- $100 units, matching `tax`'s quantization. Unlike llcPct/
+                -- benefits above, 0 is a real, meaningful result here (see that
+                -- script's module docstring -- most class-2 tier-1 buildings
+                -- genuinely gap to $0), so it's kept as an explicit 0 for the
+                -- population the metric applies to; only omitted (NULL) for
+                -- buildings the metric doesn't apply to at all.
+                CASE WHEN tax_class = '2' AND building_effective_rate_tier1 IS NOT NULL
+                     THEN CAST(ROUND(building_dollar_gap_vs_class1_trend / 100) AS INTEGER)
+                     ELSE NULL END AS gap,
                 ST_GeomFromWKB(geom_wkb) AS geom
             FROM read_parquet('{CACHE}/buildings_geom.parquet')
             {where}

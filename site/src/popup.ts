@@ -28,15 +28,26 @@ export interface BuildingProps {
   pctl?: number | null;
   nsale?: number | null;
   // v2 roadmap (PLAN.md milestone 10): owner-entity, stacked-benefit, and
-  // dollar-gap fields, all detail-zoom-only like the fields above.
+  // dollar-gap fields, all detail-zoom-only like the fields above. llcPct/
+  // ownerEntity/benefits are only present at all when nonzero/applicable
+  // (pipeline/11_build_tileset.py NULLs out the default case rather than
+  // shipping an explicit 0/false for 856K features) -- absent here means
+  // either "not zoomed in" or "genuinely none," which render identically
+  // (nothing shown), so no separate signal is needed to tell them apart.
   llcPct?: number | null;
   ownerEntity?: string | null;
-  ex421a?: number | null;
-  exJ51?: number | null;
-  abCoop?: number | null;
-  abJ51?: number | null;
+  // Bitmask: 1=421-a exemption, 2=J-51 exemption, 4=J-51 abatement,
+  // 8=co-op/condo abatement -- see 11_build_tileset.py's matching comment.
+  benefits?: number | null;
   gap?: number | null;
 }
+
+const BENEFIT_LABELS: Array<[bit: number, label: string]> = [
+  [1, "421-a exemption"],
+  [2, "J-51 exemption"],
+  [4, "J-51 abatement"],
+  [8, "co-op/condo abatement"],
+];
 
 function row(label: string, value: string, sub?: string): string {
   return `<div class="popup-row"><span class="popup-label">${label}</span><span class="popup-value">${value}${
@@ -110,32 +121,24 @@ export function buildPopupHtml(p: BuildingProps): string {
     rows.push(`<p class="popup-note">No valuation on record (likely tax-exempt).</p>`);
   }
 
-  // Owner-entity flag (PLAN.md v2 roadmap item 2) -- `llcPct != null` gates
-  // on detail-zoom data being loaded at all, same pattern as `addr` above.
-  // A single owner's actual NAME is only ever shipped when it's an
-  // LLC/LP-style entity (see pipeline/11_build_tileset.py) -- an individual
-  // homeowner's name is never surfaced, by design, so no line is shown for
-  // that case rather than reporting "not an entity."
-  if (p.llcPct != null) {
-    if (p.units === 1 && p.ownerEntity) {
-      rows.push(row("Owner on record", escapeHtml(p.ownerEntity), "LLC/LP"));
-    } else if (p.units > 1) {
-      rows.push(row("Held by an LLC/LP-named owner", `${p.llcPct}% of units`));
-    }
+  // Owner-entity flag (PLAN.md v2 roadmap item 2). A single owner's actual
+  // NAME is only ever shipped when it's an LLC/LP-style entity (see
+  // pipeline/11_build_tileset.py) -- an individual homeowner's name is
+  // never surfaced, by design, so no line is shown for that case rather
+  // than reporting "not an entity."
+  if (p.units === 1 && p.ownerEntity) {
+    rows.push(row("Owner on record", escapeHtml(p.ownerEntity), "LLC/LP"));
+  } else if (p.units > 1 && p.llcPct != null) {
+    rows.push(row("Held by an LLC/LP-named owner", `${p.llcPct}% of units`));
   }
 
   // Stacked-benefit flags (PLAN.md v2 roadmap item 3) -- reported as
   // separate, plainly-labeled facts, never folded into the effective-rate
-  // row. `ex421a != null` gates on detail-zoom data being loaded.
-  if (p.ex421a != null) {
-    const benefits: string[] = [];
-    if (p.ex421a) benefits.push("421-a exemption");
-    if (p.exJ51) benefits.push("J-51 exemption");
-    if (p.abJ51) benefits.push("J-51 abatement");
-    if (p.abCoop) benefits.push("co-op/condo abatement");
-    if (benefits.length) {
-      rows.push(row("Tax benefits on record", benefits.join(", ")));
-    }
+  // row. `benefits` is only present at all when at least one bit is set
+  // (see BuildingProps), so no length check is needed here.
+  if (p.benefits != null) {
+    const benefits = BENEFIT_LABELS.filter(([bit]) => (p.benefits! & bit) !== 0).map(([, label]) => label);
+    rows.push(row("Tax benefits on record", benefits.join(", ")));
   }
 
   return `

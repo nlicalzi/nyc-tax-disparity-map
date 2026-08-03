@@ -63,8 +63,9 @@ to PLUTO building-lot aggregation works.
   iterative debugging (a single indexed lookup took >15min).
 - `site/public/tiles/buildings.pmtiles` -- the production citywide vector
   tileset (856,471 features, z9-z16, lean/quantized schema). Committed to
-  the repo (103MB, under GitHub's 100MB hard limit but past the 50MB LFS
-  warning threshold -- watch this if the tileset grows).
+  the repo (75.9MB as of the v2 roadmap's milestone 10 tileset-size
+  refactor -- see PLAN.md; under GitHub's 100MB hard limit but past the
+  50MB LFS warning threshold -- watch this if the tileset grows).
 - `data/cache/dev_sample.pmtiles` -- Manhattan-only tileset for the agent's
   own dev-loop browser checks (gitignored, never committed).
 - `site/public/scatter-sample.json.gz` -- milestone 5's narrative-layer
